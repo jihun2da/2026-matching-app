@@ -1,13 +1,17 @@
-# brand_matching_system.py
 # -*- coding: utf-8 -*-
+"""
+브랜드 매칭 시스템 - 매칭 실패 시 유사 상품 추천 기능 탑재 버전
+"""
 
 import pandas as pd
 import re
 import logging
+import gc
 from typing import List, Dict, Tuple
+from functools import lru_cache
 from difflib import SequenceMatcher
 
-# 🌟 AWS 클라우드 DB 연동
+import streamlit as st
 from database import SessionLocal, MasterProduct, Synonym, Keyword
 
 logger = logging.getLogger(__name__)
@@ -40,6 +44,8 @@ class BrandMatchingSystem:
             'multiple_spaces': r'\s+',
             'comma_spaces': r'\s*,\s*',
             'multiple_commas': r',+',
+            'korean_alpha_num': r'[가-힣a-zA-Z0-9]',
+            'word_boundary': r'^[a-zA-Z0-9가-힣\s]+$',
             'color_keywords': r'(?:색상|컬러|Color)',
             'size_keywords': r'(?:사이즈|Size)',
             'slash_pattern': r'^([^/]+)/([^/]+)$',
@@ -53,9 +59,6 @@ class BrandMatchingSystem:
             else:
                 self._compiled_patterns[name] = re.compile(pattern)
 
-    # ==========================================
-    # 🌟 1. AWS DB 데이터 로드 로직
-    # ==========================================
     def load_synonyms_from_db(self):
         db = SessionLocal()
         try:
@@ -110,9 +113,6 @@ class BrandMatchingSystem:
         finally:
             db.close()
 
-    # ==========================================
-    # 🌟 2. 클라이언트 원본 유틸리티 함수 100% 복구
-    # ==========================================
     def _build_brand_index(self):
         if self.brand_data is None or self.brand_data.empty:
             self.brand_index = {}
@@ -151,7 +151,6 @@ class BrandMatchingSystem:
         for keyword in self.keyword_list:
             if not keyword: continue
             cleaned_keyword = keyword.strip()
-            
             if cleaned_keyword.startswith('*') and cleaned_keyword.endswith('*'):
                 inner = cleaned_keyword[1:-1]
                 pat1 = r'\(' + re.escape(inner).replace(r'\~', r'[~-]') + r'\)'
@@ -167,7 +166,6 @@ class BrandMatchingSystem:
                 result = re.sub(pat, '', result, flags=re.IGNORECASE)
                 try: result = re.sub(r'\b' + re.escape(cleaned_keyword) + r'\b', '', result, flags=re.IGNORECASE)
                 except: result = re.sub(re.escape(cleaned_keyword), '', result, flags=re.IGNORECASE)
-        
         return re.sub(r'\s+', ' ', result).strip()
 
     def parse_options(self, option_text: str) -> tuple:
@@ -242,7 +240,6 @@ class BrandMatchingSystem:
         upload_size = self.normalize_size_format(upload_size.strip().upper())
         brand_size_pattern = brand_size_pattern.upper()
         
-        # 주니어 사이즈 명시적 차단
         if upload_size == 'S' and 'JS' in brand_size_pattern and not re.search(r'\[S\]|\bS\b', brand_size_pattern.replace('JS', '')): return 0.0
         if upload_size == 'M' and 'JM' in brand_size_pattern and not re.search(r'\[M\]|\bM\b', brand_size_pattern.replace('JM', '')): return 0.0
         if upload_size == 'L' and 'JL' in brand_size_pattern and not re.search(r'\[L\]|\bL\b', brand_size_pattern.replace('JL', '').replace('XL', '').replace('XXL', '')): return 0.0
@@ -349,7 +346,6 @@ class BrandMatchingSystem:
         try:
             normalized = name_str.lower()
             normalized = re.sub(r'\([^)]*[~-][^)]*\)', '', normalized)
-            normalized = re.sub(r'\([^)]*[~-][^)]*\)', '', normalized)
             normalized = re.sub(r'\*[^*]*[~-][^*]*\*', '', normalized)
             
             if self.keyword_list:
@@ -399,9 +395,6 @@ class BrandMatchingSystem:
         except Exception:
             return name_str.lower()
 
-    # ==========================================
-    # 🌟 3. 핵심: Sheet1 -> Sheet2 뼈대 변환 로직
-    # ==========================================
     def convert_sheet1_to_sheet2(self, sheet1_df: pd.DataFrame) -> pd.DataFrame:
         sheet2_columns = [
             'A열(ㅇ)', 'B열(미등록주문)', 'C열(주문일)', 'D열(아이디주문번호)', 'E열(ㅇ)',
@@ -477,23 +470,22 @@ class BrandMatchingSystem:
 
         return pd.DataFrame(sheet2_rows, columns=sheet2_columns)
 
-    # ==========================================
-    # 🌟 4. 원본 점수 매칭 로직 (match_row) - ✨ 브랜드명 동의어 로직 추가!
-    # ==========================================
-    def match_row(self, brand: str, product: str, size: str, color: str = "") -> Tuple[str, str, str, bool, float]:
+    def match_row(self, brand: str, product: str, size: str, color: str = "") -> Tuple[str, str, str, bool, float, List[str]]:
         brand, product = str(brand).strip(), str(product).strip()
-        if not brand or not product: return "매칭 실패", "", "", False, 0.0
+        
+        # 1. 아예 입력값이 없는 경우
+        if not brand or not product: 
+            return "매칭 실패", "", "", False, 0.0, []
             
         brand_clean = re.sub(r'[\[\]\(\)]', '', brand).strip().lower()
         normalized_product = self.normalize_product_name(product)
         
-        # ✨ [핵심 수정] 브랜드명도 동의어 사전을 거치도록 업그레이드!
         search_brands = set([brand_clean])
         
+        # 동의어 확장
         for std_word, syn_words in self.synonym_dict.items():
             std_word_lower = std_word.lower()
             syn_words_lower = [s.lower() for s in syn_words]
-            
             if brand_clean == std_word_lower or brand_clean in syn_words_lower:
                 search_brands.add(std_word_lower)
                 search_brands.update(syn_words_lower)
@@ -502,57 +494,78 @@ class BrandMatchingSystem:
         for b in search_brands:
             candidate_rows.extend(self.brand_index.get(b, []))
             
-        if not candidate_rows: return "매칭 실패", "", "", False, 0.0
+        # 2. 브랜드를 아예 찾지 못한 경우 -> DB 전체에서 텍스트 기반으로 가장 비슷한 상품 2개 추출
+        if not candidate_rows: 
+            fallback_cands = []
+            upload_full = f"{brand} {product}".strip().lower()
+            if self.brand_data is not None and not self.brand_data.empty:
+                for row_dict in self.brand_data.to_dict('records'):
+                    db_full = f"{str(row_dict.get('브랜드', ''))} {str(row_dict.get('상품명', ''))}".strip().lower()
+                    sim = SequenceMatcher(None, upload_full, db_full).ratio() * 100
+                    if sim >= 20:  # 최소 20% 이상 유사한 것만
+                        fallback_cands.append({'row_dict': row_dict, 'total_sim': sim})
+                
+                fallback_cands.sort(key=lambda x: x['total_sim'], reverse=True)
+                
+            top_2_suggestions = []
+            for c in fallback_cands[:2]:
+                rd = c['row_dict']
+                top_2_suggestions.append(f"[{rd.get('브랜드', '')}] {rd.get('상품명', '')} ({c['total_sim']:.1f}%)")
+                
+            return "매칭 실패", "", "", False, 0.0, top_2_suggestions
 
-        product_candidates = []
+        # 3. 브랜드를 찾은 경우 -> 상품명 유사도 계산
+        evaluated_candidates = []
+        best_match, best_similarity = None, 0.0
+
         for row_dict in candidate_rows:
             row_product = self.normalize_product_name(str(row_dict.get('상품명', '')).strip())
             product_similarity = self.calculate_similarity(normalized_product, row_product)
-            if product_similarity >= 70:
-                product_candidates.append({'row_dict': row_dict, 'product_similarity': product_similarity})
-        
-        if not product_candidates: return "매칭 실패", "", "", False, 0.0
-        product_candidates.sort(key=lambda x: x['product_similarity'], reverse=True)
-        top_candidates = product_candidates[:5]
-        
-        best_match, best_similarity = None, 0.0
+            
+            # 상품명 유사도가 어느 정도 있는 것들만 평가
+            if product_similarity >= 30:
+                color_similarity = 100.0
+                if color:
+                    row_color_pattern = self.extract_color(str(row_dict.get('옵션입력', '')))
+                    color_similarity = self.calculate_similarity(color, row_color_pattern) if row_color_pattern else 0.0
+                
+                size_similarity = 100.0
+                if size:
+                    row_size_pattern = self.extract_size(str(row_dict.get('옵션입력', '')))
+                    size_similarity = self.check_size_match(size, row_size_pattern) if row_size_pattern else 0.0
+                    if size_similarity < 50: continue # 사이즈 안 맞으면 탈락
+                
+                total_similarity = (product_similarity * 0.45 + size_similarity * 0.30 + color_similarity * 0.20 + 50.0 * 0.05)
+                if not color and not size: total_similarity = product_similarity
+                elif not color: total_similarity = product_similarity * 0.8 + size_similarity * 0.2
+                elif not size: total_similarity = product_similarity * 0.8 + color_similarity * 0.2
+                
+                evaluated_candidates.append({
+                    'row_dict': row_dict,
+                    'total_sim': total_similarity
+                })
+                
+                if total_similarity > best_similarity:
+                    best_similarity = total_similarity
+                    best_match = row_dict
 
-        for candidate in top_candidates:
-            row_dict = candidate['row_dict']
-            product_similarity = candidate['product_similarity']
-            
-            color_similarity = 100.0
-            if color:
-                row_color_pattern = self.extract_color(str(row_dict.get('옵션입력', '')))
-                color_similarity = self.calculate_similarity(color, row_color_pattern) if row_color_pattern else 0.0
-            
-            size_similarity = 100.0
-            if size:
-                row_size_pattern = self.extract_size(str(row_dict.get('옵션입력', '')))
-                size_similarity = self.check_size_match(size, row_size_pattern) if row_size_pattern else 0.0
-                if size_similarity < 50: continue
-            
-            total_similarity = (product_similarity * 0.45 + size_similarity * 0.30 + color_similarity * 0.20 + 50.0 * 0.05)
-            
-            if not color and not size: total_similarity = product_similarity
-            elif not color: total_similarity = product_similarity * 0.8 + size_similarity * 0.2
-            elif not size: total_similarity = product_similarity * 0.8 + color_similarity * 0.2
-            
-            if total_similarity > best_similarity:
-                best_similarity = total_similarity
-                best_match = row_dict
+        # 추천 상품 상위 2개 추출
+        evaluated_candidates.sort(key=lambda x: x['total_sim'], reverse=True)
+        top_2_suggestions = []
+        for c in evaluated_candidates[:2]:
+            rd = c['row_dict']
+            top_2_suggestions.append(f"[{rd.get('브랜드', '')}] {rd.get('상품명', '')} ({c['total_sim']:.1f}%)")
 
         if best_match and best_similarity >= 60:
             공급가 = best_match.get('공급가', 0)
             중도매 = best_match.get('중도매', '')
             브랜드상품명 = f"{best_match.get('브랜드', '')} {best_match.get('상품명', '')}"
-            return 공급가, 중도매, 브랜드상품명, True, best_similarity
+            return 공급가, 중도매, 브랜드상품명, True, best_similarity, top_2_suggestions
 
-        return "매칭 실패", "", "", False, best_similarity
+        return "매칭 실패", "", "", False, best_similarity, top_2_suggestions
 
     def process_matching(self, sheet1_df: pd.DataFrame) -> Tuple[pd.DataFrame, List[Dict]]:
         sheet2_df = self.convert_sheet1_to_sheet2(sheet1_df)
-        
         if sheet2_df.empty: return sheet2_df, []
 
         results = {
@@ -562,16 +575,16 @@ class BrandMatchingSystem:
         }
         failed_products = []
         rows_dict = sheet2_df.to_dict('records')
-        indices = sheet2_df.index.tolist()
 
-        for current_index, (row_dict, idx) in enumerate(zip(rows_dict, indices)):
+        for current_index, row_dict in enumerate(rows_dict):
             brand = str(row_dict.get('H열(브랜드)', '')).strip()
             product = str(row_dict.get('I열(상품명)', '')).strip()
             size = str(row_dict.get('K열(사이즈)', '')).strip()
             color = str(row_dict.get('J열(색상)', '')).strip()
             quantity = row_dict.get('L열(수량)', 1)
 
-            공급가, 중도매, 브랜드상품명, success, sim_score = self.match_row(brand, product, size, color)
+            # 변경된 리턴값 (추천 목록 포함)을 받아옵니다.
+            공급가, 중도매, 브랜드상품명, success, sim_score, suggestions = self.match_row(brand, product, size, color)
             results['종합_유사도'][current_index] = sim_score
 
             if success and 공급가 != "매칭 실패":
@@ -582,9 +595,15 @@ class BrandMatchingSystem:
                 except: results['W열(금액)'][current_index] = 0
             else:
                 results['매칭_상태'][current_index] = "매칭실패"
+                # 실패 데이터와 추천 데이터 정리
                 failed_products.append({
-                    '브랜드': brand, '상품명': product, '색상': color, 
-                    '사이즈': size, '수량': quantity, '최고_유사도': f"{sim_score:.1f}%"
+                    '발주_브랜드': brand, 
+                    '발주_상품명': product, 
+                    '옵션(색상/사이즈)': f"{color} / {size}", 
+                    '수량': quantity, 
+                    '최고_유사도': f"{sim_score:.1f}%",
+                    '💡추천상품_1순위': suggestions[0] if len(suggestions) > 0 else "추천 없음",
+                    '💡추천상품_2순위': suggestions[1] if len(suggestions) > 1 else "추천 없음"
                 })
 
         sheet2_df['N열(중도매명)'] = results['N열(중도매명)']
