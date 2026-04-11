@@ -3,6 +3,8 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, 
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 
+import streamlit as st  # 👈 바로 이 줄을 추가해 주세요!
+
 # 🚨 클라이언트님의 AWS RDS 정보로 세팅된 주소입니다!
 # 주의: <여기에비밀번호입력> 부분을 지우고, 처음에 설정하셨던 마스터 비밀번호로 꼭 바꿔주세요! (괄호 <>도 지우셔야 합니다)
 SQLALCHEMY_DATABASE_URL = st.secrets["DB_URL"]
