@@ -5,8 +5,7 @@ from datetime import datetime
 
 # 🚨 클라이언트님의 AWS RDS 정보로 세팅된 주소입니다!
 # 주의: <여기에비밀번호입력> 부분을 지우고, 처음에 설정하셨던 마스터 비밀번호로 꼭 바꿔주세요! (괄호 <>도 지우셔야 합니다)
-DB_PASSWORD = "Ppooii**9098"
-SQLALCHEMY_DATABASE_URL = f"postgresql://postgres:{DB_PASSWORD}@matching-db-2026.cozmuw2eq103.us-east-1.rds.amazonaws.com:5432/matching_db"
+SQLALCHEMY_DATABASE_URL = st.secrets["DB_URL"]
 
 # DB 연결 엔진 생성
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
