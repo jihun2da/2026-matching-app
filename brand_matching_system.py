@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-브랜드 매칭 시스템 - 매칭 실패 시 유사 상품 추천 기능 탑재 버전
+브랜드 매칭 시스템 - 매칭 실패 시 유사 상품 추천(도매가 포함) 기능 탑재 버전
 """
 
 import pandas as pd
@@ -510,7 +510,12 @@ class BrandMatchingSystem:
             top_2_suggestions = []
             for c in fallback_cands[:2]:
                 rd = c['row_dict']
-                top_2_suggestions.append(f"[{rd.get('브랜드', '')}] {rd.get('상품명', '')} ({c['total_sim']:.1f}%)")
+                price = rd.get('공급가', 0)
+                try: price_str = f"{int(price):,}원"
+                except: price_str = f"{price}원"
+                
+                # 🌟 도매가(공급가) 정보 추가된 부분
+                top_2_suggestions.append(f"[{rd.get('브랜드', '')}] {rd.get('상품명', '')} | 도매가: {price_str} ({c['total_sim']:.1f}%)")
                 
             return "매칭 실패", "", "", False, 0.0, top_2_suggestions
 
@@ -554,7 +559,12 @@ class BrandMatchingSystem:
         top_2_suggestions = []
         for c in evaluated_candidates[:2]:
             rd = c['row_dict']
-            top_2_suggestions.append(f"[{rd.get('브랜드', '')}] {rd.get('상품명', '')} ({c['total_sim']:.1f}%)")
+            price = rd.get('공급가', 0)
+            try: price_str = f"{int(price):,}원"
+            except: price_str = f"{price}원"
+            
+            # 🌟 도매가(공급가) 정보 추가된 부분
+            top_2_suggestions.append(f"[{rd.get('브랜드', '')}] {rd.get('상품명', '')} | 도매가: {price_str} ({c['total_sim']:.1f}%)")
 
         if best_match and best_similarity >= 60:
             공급가 = best_match.get('공급가', 0)
