@@ -152,23 +152,47 @@ elif menu == "📚 동의어/키워드 관리":
         st.rerun()
 
     st.markdown("---")
-    tab1, tab2 = st.tabs(["📚 동의어 사전 추가", "✂️ 제외 키워드 추가"])
+    tab1, tab2 = st.tabs(["📚 동의어 사전 추가/삭제", "✂️ 제외 키워드 추가/삭제"])
     
     with tab1:
-        st.subheader("새로운 동의어 등록")
+        st.subheader("➕ 새로운 동의어 등록")
         with st.form("synonym_form", clear_on_submit=True):
             col1, col2 = st.columns(2)
-            with col1: std_word = st.text_input("기준 단어 (DB 진짜 브랜드명)", placeholder="예: 나이키")
-            with col2: syn_word = st.text_input("동의어 (발주서 오타)", placeholder="예: 나이기")
+            with col1: std_word = st.text_input("기준 단어 (DB 진짜 브랜드명)", placeholder="예: 팬츠")
+            with col2: syn_word = st.text_input("동의어 (발주서 오타)", placeholder="예: 바지")
             submit_syn = st.form_submit_button("AWS DB에 추가하기")
             
             if submit_syn and std_word and syn_word:
                 db = SessionLocal()
                 try:
-                    db.add(Synonym(standard_word=std_word.strip(), synonym_word=syn_word.strip()))
-                    db.commit()
-                    st.success("✅ 성공!")
-                    st.cache_resource.clear()
+                    existing = db.query(Synonym).filter(Synonym.synonym_word == syn_word.strip()).first()
+                    if existing:
+                        st.warning(f"🚨 이미 등록된 동의어입니다! (현재 '{existing.standard_word}'의 동의어로 등록되어 있습니다.)")
+                    else:
+                        db.add(Synonym(standard_word=std_word.strip(), synonym_word=syn_word.strip()))
+                        db.commit()
+                        st.success("✅ 성공적으로 추가되었습니다!")
+                        st.cache_resource.clear()
+                except Exception as e: st.error(f"오류: {e}")
+                finally: db.close()
+
+        st.markdown("---")
+        st.subheader("🗑️ 동의어 삭제하기")
+        with st.form("delete_syn_form", clear_on_submit=True):
+            del_syn_word = st.text_input("삭제할 '동의어(오타)'를 정확히 입력하세요", placeholder="예: 바지")
+            submit_del_syn = st.form_submit_button("삭제하기")
+            
+            if submit_del_syn and del_syn_word:
+                db = SessionLocal()
+                try:
+                    to_delete = db.query(Synonym).filter(Synonym.synonym_word == del_syn_word.strip()).first()
+                    if to_delete:
+                        db.delete(to_delete)
+                        db.commit()
+                        st.success(f"✅ 동의어 '{del_syn_word}'가 삭제되었습니다!")
+                        st.cache_resource.clear()
+                    else:
+                        st.warning(f"'{del_syn_word}'는 등록되어 있지 않습니다.")
                 except Exception as e: st.error(f"오류: {e}")
                 finally: db.close()
         
@@ -180,7 +204,7 @@ elif menu == "📚 동의어/키워드 관리":
         db.close()
 
     with tab2:
-        st.subheader("새로운 제외 키워드 등록")
+        st.subheader("➕ 새로운 제외 키워드 등록")
         with st.form("keyword_form", clear_on_submit=True):
             new_keyword = st.text_input("제외할 키워드 입력", placeholder="예: (무료배송)")
             submit_kw = st.form_submit_button("AWS DB에 추가하기")
@@ -188,10 +212,34 @@ elif menu == "📚 동의어/키워드 관리":
             if submit_kw and new_keyword:
                 db = SessionLocal()
                 try:
-                    db.add(Keyword(keyword_text=new_keyword.strip()))
-                    db.commit()
-                    st.success("✅ 성공!")
-                    st.cache_resource.clear()
+                    existing_kw = db.query(Keyword).filter(Keyword.keyword_text == new_keyword.strip()).first()
+                    if existing_kw:
+                        st.warning("🚨 이미 등록된 키워드입니다!")
+                    else:
+                        db.add(Keyword(keyword_text=new_keyword.strip()))
+                        db.commit()
+                        st.success("✅ 성공적으로 추가되었습니다!")
+                        st.cache_resource.clear()
+                except Exception as e: st.error(f"오류: {e}")
+                finally: db.close()
+
+        st.markdown("---")
+        st.subheader("🗑️ 키워드 삭제하기")
+        with st.form("delete_kw_form", clear_on_submit=True):
+            del_keyword = st.text_input("삭제할 '방해물 키워드'를 정확히 입력하세요", placeholder="예: (무료배송)")
+            submit_del_kw = st.form_submit_button("삭제하기")
+            
+            if submit_del_kw and del_keyword:
+                db = SessionLocal()
+                try:
+                    to_delete_kw = db.query(Keyword).filter(Keyword.keyword_text == del_keyword.strip()).first()
+                    if to_delete_kw:
+                        db.delete(to_delete_kw)
+                        db.commit()
+                        st.success(f"✅ 키워드 '{del_keyword}'가 삭제되었습니다!")
+                        st.cache_resource.clear()
+                    else:
+                        st.warning(f"'{del_keyword}'는 등록되어 있지 않습니다.")
                 except Exception as e: st.error(f"오류: {e}")
                 finally: db.close()
         
