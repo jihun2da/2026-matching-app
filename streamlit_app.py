@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 from brand_matching_system import BrandMatchingSystem
-from database import SessionLocal, Synonym, Keyword  # 🌟 DB에 직접 데이터를 넣기 위해 추가된 부품!
+from database import SessionLocal, Synonym, Keyword
 
 # 1. 페이지 기본 설정 (가장 상단에 위치해야 함)
 st.set_page_config(page_title="2026 브랜드 매칭 시스템", layout="wide", initial_sidebar_state="expanded")
@@ -11,7 +11,6 @@ st.set_page_config(page_title="2026 브랜드 매칭 시스템", layout="wide", 
 with st.sidebar:
     st.title("⚙️ 2026 시스템 메뉴")
     st.markdown("---")
-    # 메뉴 선택기
     menu = st.radio(
         "작업 메뉴를 선택하세요", 
         ["✅ 발주서 자동 매칭", "📚 동의어/키워드 관리", "📊 DB 연동 상태"]
@@ -30,24 +29,35 @@ engine = load_engine()
 # 🚀 메인 화면 1: 발주서 자동 매칭 메뉴
 # ==========================================
 if menu == "✅ 발주서 자동 매칭":
-    st.title("🚀 2026 브랜드 매칭 시스템 (스마트 추천 탑재)")
-    st.markdown("발주 엑셀 파일을 업로드하면 AWS DB와 연동하여 초고속으로 매칭을 완료합니다.")
+    st.title("🚀 2026 브랜드 매칭 시스템 (다중 파일 일괄 처리)")
+    st.markdown("여러 개의 발주 엑셀 파일을 한 번에 업로드하시면, 통합하여 매칭 후 하나의 결과 파일로 만들어 드립니다.")
     st.markdown("---")
 
-    st.subheader("📁 발주서 업로드")
-    uploaded_file = st.file_uploader("작업할 발주 엑셀 파일(Sheet1)을 업로드하세요", type=['xlsx', 'xls'])
+    st.subheader("📁 발주서 일괄 업로드")
+    # 🌟 [다중 파일 기능 추가] accept_multiple_files=True 로 설정
+    uploaded_files = st.file_uploader(
+        "작업할 발주 엑셀 파일들을 모두 드래그해서 올려주세요 (최대 권장: 합산 1만 행)", 
+        type=['xlsx', 'xls'], 
+        accept_multiple_files=True
+    )
 
-    if uploaded_file is not None:
-        st.info("파일을 분석하고 있습니다...")
+    if uploaded_files: # 파일이 1개라도 업로드 되었다면
+        st.info(f"📁 총 {len(uploaded_files)}개의 파일을 병합하여 분석 중입니다...")
         try:
-            # 엑셀 파일 읽기
-            sheet1_df = pd.read_excel(uploaded_file)
+            # 🌟 [핵심] 여러 개의 엑셀 파일을 읽어서 하나의 표(DataFrame)로 합치기
+            dfs = []
+            for file in uploaded_files:
+                df = pd.read_excel(file)
+                dfs.append(df)
             
-            with st.spinner("🤖 매칭 엔진 가동 중... (AWS DB 데이터 비교 중)"):
-                # 매칭 프로세스 실행
+            # 모든 파일의 데이터를 세로로 쭉 이어 붙입니다.
+            sheet1_df = pd.concat(dfs, ignore_index=True)
+            
+            with st.spinner(f"🤖 총 {len(sheet1_df):,}행 통합 매칭 엔진 가동 중... (AWS DB 연동)"):
+                # 매칭 프로세스 실행 (합쳐진 데이터로 한 번에 실행!)
                 sheet2_df, failed_products = engine.process_matching(sheet1_df)
                 
-            st.success("🎉 매칭 작업이 완료되었습니다!")
+            st.success("🎉 모든 파일의 통합 매칭 작업이 완료되었습니다!")
             
             # 매칭 통계 보여주기
             total_count = len(sheet2_df)
@@ -55,9 +65,9 @@ if menu == "✅ 발주서 자동 매칭":
             success_count = total_count - failed_count
             
             col1, col2, col3 = st.columns(3)
-            col1.metric("총 발주 건수", f"{total_count}건")
-            col2.metric("매칭 성공 (정확/유사)", f"{success_count}건")
-            col3.metric("매칭 실패 (추천 필요)", f"{failed_count}건")
+            col1.metric("총 발주 건수 (병합됨)", f"{total_count:,}건")
+            col2.metric("매칭 성공 (정확/유사)", f"{success_count:,}건")
+            col3.metric("매칭 실패 (추천 필요)", f"{failed_count:,}건")
             
             # 결과 미리보기 화면
             st.markdown("---")
@@ -65,14 +75,14 @@ if menu == "✅ 발주서 자동 매칭":
             st.dataframe(sheet2_df.head(50))
             
             st.markdown("---")
-            st.subheader("💡 엑셀 다운로드 (스마트 추천 시트 포함)")
-            st.write("다운로드하신 엑셀 파일의 **두 번째 시트**에서 실패 건에 대한 유사 상품 추천을 확인하실 수 있습니다.")
+            st.subheader("💡 통합 엑셀 다운로드 (스마트 추천 시트 포함)")
+            st.write("업로드하신 모든 파일의 결과가 하나로 합쳐진 파일입니다. **두 번째 시트**에서 실패 건 및 추천 상품을 확인하세요.")
 
             # 엑셀 다운로드 생성 (2개 시트 분리 로직)
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                # 첫 번째 시트: 전체 매칭 결과 (기존 양식)
-                sheet2_df.to_excel(writer, index=False, sheet_name='전체_매칭결과')
+                # 첫 번째 시트: 전체 매칭 결과
+                sheet2_df.to_excel(writer, index=False, sheet_name='통합_전체_매칭결과')
                 
                 # 두 번째 시트: 실패 건 및 스마트 추천
                 if failed_products:
@@ -81,34 +91,30 @@ if menu == "✅ 발주서 자동 매칭":
             
             # 다운로드 버튼
             st.download_button(
-                label="📥 매칭 완료 엑셀 다운로드",
+                label="📥 통합 매칭 완료 엑셀 다운로드",
                 data=output.getvalue(),
-                file_name="매칭완료_스마트결과.xlsx",
+                file_name="통합_매칭완료_스마트결과.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
         except Exception as e:
-            st.error(f"엑셀 처리 중 에러가 발생했습니다: {e}")
+            st.error(f"엑셀 파일 병합 또는 처리 중 에러가 발생했습니다: {e}")
 
 # ==========================================
-# 📚 서브 화면 2: 동의어/키워드 관리 (🌟 완벽 구현!)
+# 📚 서브 화면 2: 동의어/키워드 관리
 # ==========================================
 elif menu == "📚 동의어/키워드 관리":
     st.title("📚 동의어 및 제외 키워드 관리")
     st.markdown("AWS DB에 직접 접근하여 매칭 엔진을 실시간으로 똑똑하게 학습시키는 관리자 전용 공간입니다.")
     
-    # 💡 동의어를 추가하면 엔진이 그걸 바로 알아채도록 '새로고침' 하는 기능
     if st.button("🔄 매칭 엔진 기억 새로고침 (DB 변경사항 즉시 적용)"):
         st.cache_resource.clear()
         st.success("매칭 엔진이 최신 DB 정보로 완벽하게 업데이트되었습니다!")
         st.rerun()
 
     st.markdown("---")
-    
-    # 탭으로 깔끔하게 나누기
     tab1, tab2 = st.tabs(["📚 동의어 사전 추가", "✂️ 제외 키워드 추가"])
     
-    # --- [탭 1] 동의어 관리 ---
     with tab1:
         st.subheader("새로운 동의어 등록")
         st.write("매칭 실패 엑셀(Sheet2)에서 확인한 오타나 별명을 추가해 주세요.")
@@ -130,7 +136,7 @@ elif menu == "📚 동의어/키워드 관리":
                         db.add(new_syn)
                         db.commit()
                         st.success(f"✅ 성공! 앞으로 발주서에 [{syn_word}] 라고 적혀도 무조건 [{std_word}] 로 매칭됩니다.")
-                        st.cache_resource.clear() # 추가 후 엔진 자동 리셋
+                        st.cache_resource.clear()
                     except Exception as e:
                         st.error(f"데이터베이스 오류: {e}")
                     finally:
@@ -149,7 +155,6 @@ elif menu == "📚 동의어/키워드 관리":
             st.info("아직 등록된 동의어가 없습니다.")
         db.close()
 
-    # --- [탭 2] 키워드 관리 ---
     with tab2:
         st.subheader("새로운 제외 키워드 등록")
         st.write("상품명에서 아예 무시하고 지워버릴 방해물 단어를 등록합니다.")
