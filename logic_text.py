@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import re
 
 def remove_size_patterns_from_brand(brand_name):
@@ -15,27 +16,21 @@ def remove_keywords(product_name, keyword_list):
     result = product_name
     for kw in keyword_list:
         if not kw: continue
-        cleaned_kw = kw.strip()
-        pat = r'[\(\*]' + re.escape(cleaned_kw.strip('(* )')) + r'[\)\*]'
+        pat = r'[\(\*]' + re.escape(kw.strip('(* )')) + r'[\)\*]'
         result = re.sub(pat, '', result, flags=re.IGNORECASE)
-        result = result.replace(cleaned_kw, '')
+        result = result.replace(kw, '')
     return re.sub(r'\s+', ' ', result).strip()
 
 def apply_smart_synonyms(text, rules, target_scope):
     if not text: return text
     n = text.lower()
     for rule in rules:
-        if target_scope not in rule['scope']: continue 
-        
-        syn = rule['syn']
-        std = rule['std']
-        
+        if target_scope not in rule['scope']: continue
         if rule['exact']:
-            pat = r'(?<![가-힣a-z0-9])' + re.escape(syn) + r'(?![가-힣a-z0-9])'
-            n = re.sub(pat, std, n)
+            pat = r'(?<![가-힣a-z0-9])' + re.escape(rule['syn']) + r'(?![가-힣a-z0-9])'
+            n = re.sub(pat, rule['std'], n)
         else:
-            if syn in n:
-                n = n.replace(syn, std)
+            n = n.replace(rule['syn'], rule['std'])
     return n
 
 def normalize_name(name, keyword_list, synonym_rules, target_scope="product"):
