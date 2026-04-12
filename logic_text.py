@@ -16,9 +16,10 @@ def remove_keywords(product_name, keyword_list):
     result = product_name
     for kw in keyword_list:
         if not kw: continue
-        pat = r'[\(\*]' + re.escape(kw.strip('(* )')) + r'[\)\*]'
+        cleaned_kw = kw.strip()
+        pat = r'[\(\*]' + re.escape(cleaned_kw.strip('(* )')) + r'[\)\*]'
         result = re.sub(pat, '', result, flags=re.IGNORECASE)
-        result = result.replace(kw, '')
+        result = result.replace(cleaned_kw, '')
     return re.sub(r'\s+', ' ', result).strip()
 
 def apply_smart_synonyms(text, rules, target_scope):
