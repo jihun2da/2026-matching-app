@@ -4,10 +4,10 @@ from io import BytesIO
 from brand_matching_system import BrandMatchingSystem
 from database import SessionLocal, Synonym, Keyword, MasterProduct
 
-# 1. 페이지 기본 설정 (가장 상단에 위치해야 함)
+# 1. 페이지 기본 설정
 st.set_page_config(page_title="2026 브랜드 매칭 시스템", layout="wide", initial_sidebar_state="expanded")
 
-# 🌟 세션 상태(기억 장치) 초기화: 화면이 날아가는 것을 완벽하게 방지합니다.
+# 🌟 세션 상태(기억 장치) 초기화
 if 'match_state' not in st.session_state:
     st.session_state.match_state = {
         'completed': False,
@@ -15,6 +15,11 @@ if 'match_state' not in st.session_state:
         'failed_products': [],
         'total_input_rows': 0
     }
+# 🌟 [신규] 삭제 확인창 이중 보안을 위한 상태 저장소
+if 'del_syn_target' not in st.session_state:
+    st.session_state.del_syn_target = None
+if 'del_kw_target' not in st.session_state:
+    st.session_state.del_kw_target = None
 
 # --- 🌟 왼쪽 사이드바 메뉴 ---
 with st.sidebar:
@@ -39,7 +44,7 @@ def load_engine():
 engine = load_engine()
 
 # ==========================================
-# 🚀 메인 화면 1: 발주서 자동 매칭 메뉴
+# 🚀 메인 화면 1: 발주서 자동 매칭 (기존 기능 100% 보존)
 # ==========================================
 if menu == "✅ 발주서 자동 매칭":
     st.title("🚀 2026 브랜드 매칭 시스템 (통합 매칭 & 기억 유지)")
@@ -59,13 +64,12 @@ if menu == "✅ 발주서 자동 매칭":
             try:
                 dfs = []
                 for file in uploaded_files:
-                    # 무조건 첫 번째 시트만 읽기
                     if file.name.endswith('.csv'):
                         df = pd.read_csv(file)
                     else:
                         df = pd.read_excel(file) 
                     
-                    df = df.dropna(how='all') # 유령 행 필터링
+                    df = df.dropna(how='all') 
                     
                     if not df.empty:
                         converted_df = engine.convert_sheet1_to_sheet2(df)
@@ -92,7 +96,6 @@ if menu == "✅ 발주서 자동 매칭":
                 with st.spinner(f"🤖 총 {total_input_rows:,}행 매칭 엔진 가동 중..."):
                     final_df, failed_products = engine.process_matching(combined_sheet2_df, progress_callback=update_progress)
                 
-                # 작업이 끝나면 결과를 세션(기억 장치)에 영구 저장
                 st.session_state.match_state['final_df'] = final_df
                 st.session_state.match_state['failed_products'] = failed_products
                 st.session_state.match_state['total_input_rows'] = total_input_rows
@@ -101,7 +104,6 @@ if menu == "✅ 발주서 자동 매칭":
             except Exception as e:
                 st.error(f"오류가 발생했습니다: {e}")
 
-    # 기억 장치에 데이터가 저장되어 있다면 항상 화면에 띄워줍니다 (무적 방어막)
     if st.session_state.match_state['completed']:
         final_df = st.session_state.match_state['final_df']
         failed_products = st.session_state.match_state['failed_products']
@@ -123,7 +125,6 @@ if menu == "✅ 발주서 자동 매칭":
         
         st.markdown("---")
         st.subheader("💡 통합 엑셀 다운로드 (스마트 추천 시트 포함)")
-        st.write("다운로드 버튼을 눌러도 화면이 초기화되지 않습니다. 엑셀의 두 번째 시트에서 실패 건 및 추천 상품을 확인하세요.")
         
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -140,11 +141,11 @@ if menu == "✅ 발주서 자동 매칭":
         )
 
 # ==========================================
-# 📚 서브 화면 2: 동의어/키워드 관리
+# 📚 서브 화면 2: 동의어/키워드 관리 (🌟 클릭 삭제 및 이중 보안 탑재!)
 # ==========================================
 elif menu == "📚 동의어/키워드 관리":
     st.title("📚 동의어 및 제외 키워드 관리")
-    st.markdown("AWS DB에 직접 접근하여 매칭 엔진을 실시간으로 똑똑하게 학습시키는 관리자 전용 공간입니다.")
+    st.markdown("매칭 엔진을 똑똑하게 제어하는 공간입니다. 표에서 줄을 선택하여 간편하게 삭제할 수 있습니다.")
     
     if st.button("🔄 매칭 엔진 기억 새로고침 (DB 변경사항 즉시 적용)"):
         st.cache_resource.clear()
@@ -154,6 +155,7 @@ elif menu == "📚 동의어/키워드 관리":
     st.markdown("---")
     tab1, tab2 = st.tabs(["📚 동의어 사전 추가/삭제", "✂️ 제외 키워드 추가/삭제"])
     
+    # ---------- [동의어 탭] ----------
     with tab1:
         st.subheader("➕ 새로운 동의어 등록")
         with st.form("synonym_form", clear_on_submit=True):
@@ -177,32 +179,69 @@ elif menu == "📚 동의어/키워드 관리":
                 finally: db.close()
 
         st.markdown("---")
-        st.subheader("🗑️ 동의어 삭제하기")
-        with st.form("delete_syn_form", clear_on_submit=True):
-            del_syn_word = st.text_input("삭제할 '동의어(오타)'를 정확히 입력하세요", placeholder="예: 바지")
-            submit_del_syn = st.form_submit_button("삭제하기")
-            
-            if submit_del_syn and del_syn_word:
-                db = SessionLocal()
-                try:
-                    to_delete = db.query(Synonym).filter(Synonym.synonym_word == del_syn_word.strip()).first()
-                    if to_delete:
-                        db.delete(to_delete)
-                        db.commit()
-                        st.success(f"✅ 동의어 '{del_syn_word}'가 삭제되었습니다!")
-                        st.cache_resource.clear()
-                    else:
-                        st.warning(f"'{del_syn_word}'는 등록되어 있지 않습니다.")
-                except Exception as e: st.error(f"오류: {e}")
-                finally: db.close()
+        st.subheader("🗑️ 등록된 동의어 삭제하기")
+        st.info("👇 지우고 싶은 단어의 맨 앞 **[삭제 선택] 네모 박스(체크박스)**를 클릭해 주세요.")
         
-        st.markdown("---")
-        st.subheader("📋 등록된 동의어 목록")
         db = SessionLocal()
         syns = db.query(Synonym).filter(Synonym.is_active == True).all()
-        if syns: st.dataframe(pd.DataFrame([{"기준 단어": s.standard_word, "동의어": s.synonym_word} for s in syns]), use_container_width=True)
+        
+        if syns:
+            # 체크박스가 포함된 데이터프레임 만들기
+            df_syns = pd.DataFrame([{"선택": False, "기준 단어 (정답)": s.standard_word, "동의어 (오타)": s.synonym_word} for s in syns])
+            
+            # 대화형 데이터 에디터 생성 (클릭 가능한 표)
+            edited_df = st.data_editor(
+                df_syns,
+                column_config={
+                    "선택": st.column_config.CheckboxColumn("삭제 선택", default=False),
+                    "기준 단어 (정답)": st.column_config.TextColumn(disabled=True),
+                    "동의어 (오타)": st.column_config.TextColumn(disabled=True)
+                },
+                hide_index=True,
+                use_container_width=True,
+                key="syn_editor"
+            )
+            
+            # 사용자가 체크박스를 선택한 항목(줄) 필터링
+            selected_syn = edited_df[edited_df["선택"] == True]
+            
+            if not selected_syn.empty:
+                target_syn = selected_syn.iloc[0]["동의어 (오타)"]
+                
+                # 1단계: 삭제 버튼 표시
+                if st.session_state.del_syn_target != target_syn:
+                    st.markdown(f"선택된 항목: **{target_syn}**")
+                    if st.button("🗑️ 선택 항목 삭제하기", key="btn_del_syn_1"):
+                        st.session_state.del_syn_target = target_syn
+                        st.rerun()
+                
+                # 2단계: 이중 보안 확인창 (정말 삭제할건지 확인)
+                if st.session_state.del_syn_target == target_syn:
+                    st.error(f"🚨 삐빅! 보안 경고: 정말로 **[{target_syn}]** 동의어를 삭제하시겠습니까? (되돌릴 수 없습니다)")
+                    c1, c2 = st.columns([1, 1])
+                    with c1:
+                        if st.button("✅ 네, 진짜 삭제합니다!", key="btn_del_syn_yes"):
+                            try:
+                                to_delete = db.query(Synonym).filter(Synonym.synonym_word == target_syn).first()
+                                if to_delete:
+                                    db.delete(to_delete)
+                                    db.commit()
+                                    st.session_state.del_syn_target = None
+                                    st.cache_resource.clear()
+                                    st.rerun()
+                            except Exception as e:
+                                st.error(f"삭제 오류: {e}")
+                    with c2:
+                        if st.button("❌ 앗, 실수입니다. (취소)", key="btn_del_syn_no"):
+                            st.session_state.del_syn_target = None
+                            st.rerun()
+            else:
+                st.session_state.del_syn_target = None # 체크 해제하면 상태 초기화
+        else:
+            st.warning("아직 등록된 동의어가 없습니다.")
         db.close()
 
+    # ---------- [제외 키워드 탭] ----------
     with tab2:
         st.subheader("➕ 새로운 제외 키워드 등록")
         with st.form("keyword_form", clear_on_submit=True):
@@ -224,34 +263,67 @@ elif menu == "📚 동의어/키워드 관리":
                 finally: db.close()
 
         st.markdown("---")
-        st.subheader("🗑️ 키워드 삭제하기")
-        with st.form("delete_kw_form", clear_on_submit=True):
-            del_keyword = st.text_input("삭제할 '방해물 키워드'를 정확히 입력하세요", placeholder="예: (무료배송)")
-            submit_del_kw = st.form_submit_button("삭제하기")
-            
-            if submit_del_kw and del_keyword:
-                db = SessionLocal()
-                try:
-                    to_delete_kw = db.query(Keyword).filter(Keyword.keyword_text == del_keyword.strip()).first()
-                    if to_delete_kw:
-                        db.delete(to_delete_kw)
-                        db.commit()
-                        st.success(f"✅ 키워드 '{del_keyword}'가 삭제되었습니다!")
-                        st.cache_resource.clear()
-                    else:
-                        st.warning(f"'{del_keyword}'는 등록되어 있지 않습니다.")
-                except Exception as e: st.error(f"오류: {e}")
-                finally: db.close()
+        st.subheader("🗑️ 등록된 키워드 삭제하기")
+        st.info("👇 지우고 싶은 키워드의 맨 앞 **[삭제 선택] 네모 박스(체크박스)**를 클릭해 주세요.")
         
-        st.markdown("---")
-        st.subheader("📋 등록된 제외 키워드 목록")
         db = SessionLocal()
         kws = db.query(Keyword).all()
-        if kws: st.dataframe(pd.DataFrame([{"방해물 키워드": k.keyword_text} for k in kws]), use_container_width=True)
+        
+        if kws:
+            # 체크박스가 포함된 데이터프레임 만들기
+            df_kws = pd.DataFrame([{"선택": False, "방해물 키워드": k.keyword_text} for k in kws])
+            
+            edited_kw_df = st.data_editor(
+                df_kws,
+                column_config={
+                    "선택": st.column_config.CheckboxColumn("삭제 선택", default=False),
+                    "방해물 키워드": st.column_config.TextColumn(disabled=True)
+                },
+                hide_index=True,
+                use_container_width=True,
+                key="kw_editor"
+            )
+            
+            selected_kw = edited_kw_df[edited_kw_df["선택"] == True]
+            
+            if not selected_kw.empty:
+                target_kw = selected_kw.iloc[0]["방해물 키워드"]
+                
+                # 1단계: 삭제 버튼 표시
+                if st.session_state.del_kw_target != target_kw:
+                    st.markdown(f"선택된 항목: **{target_kw}**")
+                    if st.button("🗑️ 선택 항목 삭제하기", key="btn_del_kw_1"):
+                        st.session_state.del_kw_target = target_kw
+                        st.rerun()
+                
+                # 2단계: 이중 보안 확인창
+                if st.session_state.del_kw_target == target_kw:
+                    st.error(f"🚨 삐빅! 보안 경고: 정말로 **[{target_kw}]** 키워드를 삭제하시겠습니까? (되돌릴 수 없습니다)")
+                    c1, c2 = st.columns([1, 1])
+                    with c1:
+                        if st.button("✅ 네, 진짜 삭제합니다!", key="btn_del_kw_yes"):
+                            try:
+                                to_delete_kw = db.query(Keyword).filter(Keyword.keyword_text == target_kw).first()
+                                if to_delete_kw:
+                                    db.delete(to_delete_kw)
+                                    db.commit()
+                                    st.session_state.del_kw_target = None
+                                    st.cache_resource.clear()
+                                    st.rerun()
+                            except Exception as e:
+                                st.error(f"삭제 오류: {e}")
+                    with c2:
+                        if st.button("❌ 앗, 실수입니다. (취소)", key="btn_del_kw_no"):
+                            st.session_state.del_kw_target = None
+                            st.rerun()
+            else:
+                st.session_state.del_kw_target = None
+        else:
+            st.warning("아직 등록된 제외 키워드가 없습니다.")
         db.close()
 
 # ==========================================
-# 📊 서브 화면 3: DB 상태 (검색 및 업로드 완벽 지원)
+# 📊 서브 화면 3: DB 상태 (기존 기능 100% 보존)
 # ==========================================
 elif menu == "📊 DB 연동 상태":
     st.title("📊 AWS DB 연동 상태 및 데이터 관리")
