@@ -1,8 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-브랜드 매칭 시스템 - [무결점 완전체] 누락 방지 + 다중 시트/다중 파일 완벽 지원
-"""
-
 import pandas as pd
 import re
 import logging
@@ -90,7 +86,7 @@ class BrandMatchingSystem:
         for row_dict in self.brand_data.to_dict('records'):
             brand = str(row_dict.get('브랜드', '')).strip().lower()
             brand_clean = re.sub(r'[\[\]\(\)]', '', brand).strip()
-            brand_clean = re.sub(r'\s+', '', brand_clean) 
+            brand_clean = re.sub(r'\s+', '', brand_clean) # 띄어쓰기 압축
             if brand_clean and brand_clean != 'nan':
                 if brand_clean not in self.brand_index:
                     self.brand_index[brand_clean] = []
@@ -362,7 +358,6 @@ class BrandMatchingSystem:
 
         return "매칭 실패", "", "", False, best_similarity, top_2
 
-    # 🌟 [수정핵심] process_matching은 이제 '이미 변환이 끝난' sheet2_df를 받아서 매칭만 집중합니다.
     def process_matching(self, sheet2_df: pd.DataFrame, progress_callback=None) -> Tuple[pd.DataFrame, List[Dict]]:
         if sheet2_df.empty: return sheet2_df, []
 
