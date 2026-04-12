@@ -10,6 +10,7 @@ if 'match_state' not in st.session_state:
     st.session_state.match_state = {'completed': False, 'final_df': None, 'failed_products': [], 'total_input_rows': 0}
 if 'del_syn_target' not in st.session_state: st.session_state.del_syn_target = None
 if 'del_kw_target' not in st.session_state: st.session_state.del_kw_target = None
+if 'del_db_target' not in st.session_state: st.session_state.del_db_target = False
 
 with st.sidebar:
     st.title("⚙️ 2026 시스템 메뉴")
@@ -29,9 +30,9 @@ engine = load_engine()
 # 🚀 메인 화면 1: 발주서 자동 매칭
 # ==========================================
 if menu == "✅ 발주서 자동 매칭":
-    st.title("🚀 2026 브랜드 매칭 시스템 (통합 매칭 & 기억 유지)")
+    st.title("🚀 2026 브랜드 매칭 시스템")
     st.markdown("---")
-    uploaded_files = st.file_uploader("발주 엑셀 파일 업로드 (첫 시트만 추출)", type=['xlsx', 'xls', 'csv'], accept_multiple_files=True)
+    uploaded_files = st.file_uploader("발주 엑셀 파일 업로드", type=['xlsx', 'xls', 'csv'], accept_multiple_files=True)
 
     if uploaded_files:
         if st.button("🏁 통합 매칭 시작", use_container_width=True):
@@ -82,7 +83,7 @@ if menu == "✅ 발주서 자동 매칭":
         st.download_button("📥 통합 결과 다운로드", data=output.getvalue(), file_name="매칭완료.xlsx")
 
 # ==========================================
-# 📚 서브 화면 2: 동의어/키워드 관리 (스마트 표기 추가)
+# 📚 서브 화면 2: 동의어/키워드 관리 
 # ==========================================
 elif menu == "📚 동의어/키워드 관리":
     st.title("📚 스마트 동의어 및 제외 키워드 관리")
@@ -125,7 +126,6 @@ elif menu == "📚 동의어/키워드 관리":
         st.markdown("---")
         db = SessionLocal()
         syns = db.query(Synonym).filter(Synonym.is_active == True).all()
-        
         if syns:
             def get_scope_str(s):
                 res = []
@@ -135,33 +135,18 @@ elif menu == "📚 동의어/키워드 관리":
                 return ", ".join(res)
 
             df_syns = pd.DataFrame([{
-                "선택": False, 
-                "정답": s.standard_word, 
-                "오타": s.synonym_word,
-                "적용범위": get_scope_str(s),
-                "강도": "완전일치" if s.is_exact_match else "부분포함"
+                "선택": False, "정답": s.standard_word, "오타": s.synonym_word,
+                "적용범위": get_scope_str(s), "강도": "완전일치" if s.is_exact_match else "부분포함"
             } for s in syns])
-            
             edited_df = st.data_editor(df_syns, column_config={"선택": st.column_config.CheckboxColumn("삭제 선택", default=False)}, hide_index=True, use_container_width=True)
             selected = edited_df[edited_df["선택"] == True]
-            
             if not selected.empty:
                 target = selected.iloc[0]["오타"]
-                if st.session_state.del_syn_target != target:
-                    if st.button("🗑️ 선택 항목 삭제하기"):
-                        st.session_state.del_syn_target = target
-                        st.rerun()
-                if st.session_state.del_syn_target == target:
-                    st.error(f"🚨 정말 [{target}] 삭제하시겠습니까?")
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        if st.button("✅ 네, 삭제"):
-                            try:
-                                to_del = db.query(Synonym).filter(Synonym.synonym_word == target).first()
-                                if to_del: db.delete(to_del); db.commit(); st.session_state.del_syn_target = None; st.cache_resource.clear(); st.rerun()
-                            finally: pass
-                    with c2:
-                        if st.button("❌ 취소"): st.session_state.del_syn_target = None; st.rerun()
+                if st.button("🗑️ 선택 항목 삭제하기"):
+                    try:
+                        to_del = db.query(Synonym).filter(Synonym.synonym_word == target).first()
+                        if to_del: db.delete(to_del); db.commit(); st.cache_resource.clear(); st.rerun()
+                    finally: pass
         db.close()
 
     with tab2:
@@ -183,30 +168,30 @@ elif menu == "📚 동의어/키워드 관리":
             sel_kw = edited_kw[edited_kw["선택"] == True]
             if not sel_kw.empty:
                 t_kw = sel_kw.iloc[0]["키워드"]
-                if st.session_state.del_kw_target != t_kw:
-                    if st.button("🗑️ 삭제"): st.session_state.del_kw_target = t_kw; st.rerun()
-                if st.session_state.del_kw_target == t_kw:
-                    st.error(f"🚨 [{t_kw}] 삭제?")
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        if st.button("✅ 네"):
-                            to_del = db.query(Keyword).filter(Keyword.keyword_text == t_kw).first()
-                            if to_del: db.delete(to_del); db.commit(); st.session_state.del_kw_target = None; st.cache_resource.clear(); st.rerun()
-                    with c2:
-                        if st.button("❌ 취소"): st.session_state.del_kw_target = None; st.rerun()
+                if st.button("🗑️ 삭제"):
+                    to_del = db.query(Keyword).filter(Keyword.keyword_text == t_kw).first()
+                    if to_del: db.delete(to_del); db.commit(); st.cache_resource.clear(); st.rerun()
         db.close()
 
 # ==========================================
-# 📊 서브 화면 3: DB 상태 
+# 📊 서브 화면 3: DB 상태 (🌟 검색창 부활 완료!)
 # ==========================================
 elif menu == "📊 DB 연동 상태":
-    st.title("📊 DB 연동 및 검색")
-    if engine.brand_data is not None: st.success(f"🟢 연결됨 (총 {len(engine.brand_data)}건)")
+    st.title("📊 마스터 DB 연동 및 검색 관리")
+    
+    # 1. DB 연결 상태 표시
+    if engine.brand_data is not None and not engine.brand_data.empty: 
+        st.success(f"🟢 AWS DB 연결 완료 (총 {len(engine.brand_data):,}건의 마스터 데이터가 존재합니다)")
+    else:
+        st.error("🔴 DB에 데이터가 없습니다. AWS 연결을 확인하거나 마스터 DB를 업로드해주세요.")
     
     st.markdown("---")
-    db_upload_file = st.file_uploader("마스터 DB 업로드", type=['xlsx', 'xls', 'csv'])
-    if db_upload_file and st.button("🚀 DB에 추가"):
-        with st.spinner("저장 중..."):
+    
+    # 2. 신규 데이터 업로드
+    st.subheader("📥 신규 마스터 DB 업로드")
+    db_upload_file = st.file_uploader("마스터 DB 엑셀 파일 업로드", type=['xlsx', 'xls', 'csv'])
+    if db_upload_file and st.button("🚀 DB에 추가", use_container_width=True):
+        with st.spinner("AWS DB에 저장 중입니다..."):
             try:
                 new_db = pd.read_csv(db_upload_file) if db_upload_file.name.endswith('.csv') else pd.read_excel(db_upload_file)
                 db = SessionLocal()
@@ -214,5 +199,23 @@ elif menu == "📊 DB 연동 상태":
                     b_val = str(r.get('브랜드', '')).strip()
                     if b_val and b_val != 'nan':
                         db.add(MasterProduct(brand=b_val, product_name=str(r.get('상품명', '')).strip(), options=str(r.get('옵션입력', '')).strip(), wholesale_name=str(r.get('중도매', '')).strip(), supply_price=str(r.get('공급가', '0')).strip()))
-                db.commit(); st.success("✅ 성공!"); st.cache_resource.clear()
+                db.commit(); st.success("✅ 성공적으로 추가되었습니다!"); st.cache_resource.clear(); st.rerun()
             finally: db.close()
+
+    st.markdown("---")
+    
+    # 3. 🌟 삭제되었던 검색 및 조회 기능 부활
+    st.subheader("🔍 마스터 DB 검색")
+    search_query = st.text_input("찾으시는 브랜드명이나 상품명을 입력하세요", placeholder="예: 고유, 바지")
+    
+    if engine.brand_data is not None and not engine.brand_data.empty:
+        df_display = engine.brand_data.copy()
+        
+        # 검색어가 있으면 필터링
+        if search_query:
+            mask = df_display['브랜드'].str.contains(search_query, case=False, na=False) | \
+                   df_display['상품명'].str.contains(search_query, case=False, na=False)
+            df_display = df_display[mask]
+            
+        st.write(f"**검색 결과:** 총 {len(df_display):,}건")
+        st.dataframe(df_display, use_container_width=True)
