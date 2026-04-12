@@ -167,6 +167,19 @@ class BrandMatchingSystem:
         if size: size = re.sub(r'\s*[/\\|]+\s*$', '', size).strip()
         return color, size
 
+    # 🌟 [누락 복구] DB 데이터에서 색상, 사이즈를 뽑아내는 함수 복구
+    def extract_size(self, text: str) -> str:
+        if pd.isna(text): return ""
+        m = re.search(r"사이즈\{([^}]*)\}", str(text))
+        if m: return m.group(1).strip().lower().replace('|', ' ').replace('\\', ' ')
+        return ""
+
+    def extract_color(self, text: str) -> str:
+        if pd.isna(text): return ""
+        m = re.search(r"색상\{([^}]*)\}", str(text))
+        if m: return m.group(1).strip().lower().replace('|', ' ').replace('\\', ' ')
+        return ""
+
     def normalize_size_format(self, size: str) -> str:
         if not size: return ""
         size = size.strip()
@@ -210,11 +223,9 @@ class BrandMatchingSystem:
         n = str(name).lower()
         n = re.sub(r'\([^)]*\)|\*[^*]*\*', '', n)
         
-        # 1. 제외 키워드 삭제
         for kw in self.keyword_list:
             if kw: n = n.replace(kw.lower(), '')
             
-        # 🌟 2. [신규 탑재] 상품명 내부 동의어 부분 치환 (예: 나나팬츠 -> 나나바지)
         for std_word, syn_words in self.synonym_dict.items():
             for syn in syn_words:
                 if syn.lower() in n:
@@ -266,12 +277,14 @@ class BrandMatchingSystem:
                             p_clean = self.remove_front_parentheses_from_product(parts[1].strip() if len(parts) > 1 else "")
                             sheet2_row['I열(상품명)'] = self.remove_keywords_from_product(p_clean)
                         else:
+                            # 🌟 [오류 B 복구] 브랜드명이 텅 비었을 때 상품명 증발 방지
                             sheet2_row['H열(브랜드)'] = ""
                             c_prod = self.normalize_product_name(e_value)
                             sheet2_row['I열(상품명)'] = e_value if len(c_prod) < 2 else c_prod
                     else:
-                        sheet2_row['H열(브랜드)'] = self.remove_size_patterns_from_brand(e_value)
-                        sheet2_row['I열(상품명)'] = ""
+                        # 🌟 [오류 B 복구] 띄어쓰기 없을 때 무조건 브랜드로 들어가는 것 방지
+                        sheet2_row['H열(브랜드)'] = ""
+                        sheet2_row['I열(상품명)'] = e_value
             
             if len(sheet1_df.columns) >= 6:
                 f_val = str(row.iloc[5]) if pd.notna(row.iloc[5]) else ""
@@ -300,34 +313,36 @@ class BrandMatchingSystem:
     def match_row(self, brand: str, product: str, size: str, color: str) -> Tuple:
         brand, product = str(brand).strip(), str(product).strip()
         
-        if not brand or not product: 
+        # 🌟 [오류 A 복구] 상품명만 없어도 매칭 실패 처리 (브랜드는 없어도 통과!)
+        if not product: 
             return "매칭 실패", "", "", False, 0.0, []
             
         brand_clean = re.sub(r'[\[\]\(\)]', '', brand).strip().lower()
         brand_clean = re.sub(r'\s+', '', brand_clean)
         
-        # 🌟 3. [신규 탑재] 브랜드명 내부의 동의어도 치환 (혹시 모를 나나팬츠 브랜드를 위해 방어망)
         for std_word, syn_words in self.synonym_dict.items():
             for syn in syn_words:
                 syn_clean = re.sub(r'\s+', '', syn.lower())
-                if syn_clean in brand_clean:
+                if syn_clean and syn_clean in brand_clean:
                     std_clean = re.sub(r'\s+', '', std_word.lower())
                     brand_clean = brand_clean.replace(syn_clean, std_clean)
 
         normalized_product = self.normalize_product_name(product)
-        search_brands = set([brand_clean])
         
-        for std_word, syn_words in self.synonym_dict.items():
-            std_word_lower = re.sub(r'\s+', '', std_word.lower())
-            syn_words_lower = [re.sub(r'\s+', '', s.lower()) for s in syn_words]
-            if brand_clean == std_word_lower or brand_clean in syn_words_lower:
-                search_brands.add(std_word_lower)
-                search_brands.update(syn_words_lower)
+        search_brands = set([brand_clean]) if brand_clean else set()
+        if brand_clean:
+            for std_word, syn_words in self.synonym_dict.items():
+                std_word_lower = re.sub(r'\s+', '', std_word.lower())
+                syn_words_lower = [re.sub(r'\s+', '', s.lower()) for s in syn_words]
+                if brand_clean == std_word_lower or brand_clean in syn_words_lower:
+                    search_brands.add(std_word_lower)
+                    search_brands.update(syn_words_lower)
         
         candidate_rows = []
         for b in search_brands:
             candidate_rows.extend(self.brand_index.get(b, []))
             
+        # 브랜드를 못 찾았거나 브랜드 자체가 없으면 DB 전체를 뒤져서 추천
         if not candidate_rows: 
             fallback_cands = []
             upload_full = re.sub(r'\s+', '', f"{brand}{product}".lower())
@@ -346,14 +361,32 @@ class BrandMatchingSystem:
                 top_2.append(f"[{rd.get('브랜드', '')}] {rd.get('상품명', '')} | 도매가: {price_str} ({c['total_sim']:.1f}%)")
             return "매칭 실패", "", "", False, 0.0, top_2
 
+        # 🌟 [오류 C 복구] 브랜드를 찾은 경우: 색상, 사이즈, 상품명 가중치(45/30/20) 정밀 채점
         evaluated_candidates = []
         best_match, best_similarity = None, 0.0
 
         for row_dict in candidate_rows:
             row_product = self.normalize_product_name(str(row_dict.get('상품명', '')).strip())
-            total_similarity = self.calculate_similarity(normalized_product, row_product)
+            product_similarity = self.calculate_similarity(normalized_product, row_product)
             
-            if total_similarity >= 30:
+            if product_similarity >= 30:
+                color_similarity = 100.0
+                if color:
+                    row_color_pattern = self.extract_color(str(row_dict.get('옵션입력', '')))
+                    color_similarity = self.calculate_similarity(color, row_color_pattern) if row_color_pattern else 0.0
+                
+                size_similarity = 100.0
+                if size:
+                    row_size_pattern = self.extract_size(str(row_dict.get('옵션입력', '')))
+                    size_similarity = self.check_size_match(size, row_size_pattern) if row_size_pattern else 0.0
+                    if size_similarity < 50: continue # 사이즈가 다르면 가차없이 탈락!
+                
+                # 🌟 거대 가중치 채점 공식 부활
+                total_similarity = (product_similarity * 0.45 + size_similarity * 0.30 + color_similarity * 0.20 + 50.0 * 0.05)
+                if not color and not size: total_similarity = product_similarity
+                elif not color: total_similarity = product_similarity * 0.8 + size_similarity * 0.2
+                elif not size: total_similarity = product_similarity * 0.8 + color_similarity * 0.2
+                
                 evaluated_candidates.append({'row_dict': row_dict, 'total_sim': total_similarity})
                 if total_similarity > best_similarity:
                     best_similarity = total_similarity
