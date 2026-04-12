@@ -10,96 +10,191 @@ from database import SessionLocal, MasterProduct, Synonym, Keyword
 class BrandMatchingSystem:
     def __init__(self):
         self.brand_data = None
-        self.synonym_rules, self.keyword_list = [], []
-        self.brand_index, self.product_index = {}, {}
+        self.synonym_rules = [] 
+        self.keyword_list = []
+        self.brand_index = {}
+        self.product_index = {}
         self.load_data()
 
     def load_data(self):
         db = SessionLocal()
         try:
             syns = db.query(Synonym).filter(Synonym.is_active == True).all()
-            self.synonym_rules = [{'std': s.standard_word.lower(), 'syn': s.synonym_word.lower(), 'scope': [k for k,v in {'brand':s.apply_brand,'product':s.apply_product,'option':s.apply_option}.items() if v], 'exact': s.is_exact_match} for s in syns]
+            self.synonym_rules = []
+            for s in syns:
+                scope = []
+                if s.apply_brand: scope.append('brand')
+                if s.apply_product: scope.append('product')
+                if s.apply_option: scope.append('option')
+                self.synonym_rules.append({
+                    'std': s.standard_word.lower(), 
+                    'syn': s.synonym_word.lower(), 
+                    'scope': scope, 
+                    'exact': s.is_exact_match
+                })
+            
             self.keyword_list = [k.keyword_text for k in db.query(Keyword).all()]
             prods = db.query(MasterProduct).all()
             data = []
             for p in prods:
                 row = {'브랜드': p.brand, '상품명': p.product_name, '옵션입력': p.options, '중도매': p.wholesale_name, '공급가': p.supply_price}
                 data.append(row)
+                
                 b_norm = lt.apply_smart_synonyms(str(p.brand), self.synonym_rules, 'brand')
                 b_key = "".join(re.sub(r'[\[\]\(\)]', '', str(b_norm)).lower().split())
                 if b_key not in self.brand_index: self.brand_index[b_key] = []
                 self.brand_index[b_key].append(row)
+                
                 p_key = lt.normalize_name(p.product_name, self.keyword_list, self.synonym_rules, 'product')
                 if p_key not in self.product_index: self.product_index[p_key] = []
                 self.product_index[p_key].append(row)
+                
             self.brand_data = pd.DataFrame(data)
-        finally: db.close()
+        finally: 
+            db.close()
 
     def extract_third_word_from_address(self, address: str) -> str:
+        if not address or pd.isna(address): return ""
         words = str(address).strip().split()
-        return words[2] if len(words) >= 3 else ""
+        if len(words) >= 3: return words[2]
+        return ""
 
     def convert_sheet1_to_sheet2(self, sheet1_df: pd.DataFrame) -> pd.DataFrame:
-        cols = ['A열(ㅇ)', 'B열(미등록주문)', 'C열(주문일)', 'D열(아이디주문번호)', 'E열(ㅇ)', 'F열(주문자명)', 'G열(위탁자명)', 'H열(브랜드)', 'I열(상품명)', 'J열(색상)', 'K열(사이즈)', 'L열(수량)', 'M열(옵션가)', 'N열(중도매명)', 'O열(도매가격)', 'P열(미송)', 'Q열(비고)', 'R열(이름)', 'S열(전화번호)', 'T열(주소)', 'U열(아이디)', 'V열(배송메세지)', 'W열(금액)']
-        rows = []
-        for _, r in sheet1_df.iterrows():
-            d = {c: "" for c in cols}
-            if len(sheet1_df.columns) >= 1: d['C열(주문일)'] = str(r.iloc[0])
-            if len(sheet1_df.columns) >= 2: d['D열(아이디주문번호)'] = str(r.iloc[1])
-            if len(sheet1_df.columns) >= 3: d['F열(주문자명)'] = str(r.iloc[2])
+        sheet2_columns = [
+            'A열(ㅇ)', 'B열(미등록주문)', 'C열(주문일)', 'D열(아이디주문번호)', 'E열(ㅇ)',
+            'F열(주문자명)', 'G열(위탁자명)', 'H열(브랜드)', 'I열(상품명)', 'J열(색상)',
+            'K열(사이즈)', 'L열(수량)', 'M열(옵션가)', 'N열(중도매명)', 'O열(도매가격)',
+            'P열(미송)', 'Q열(비고)', 'R열(이름)', 'S열(전화번호)', 'T열(주소)',
+            'U열(아이디)', 'V열(배송메세지)', 'W열(금액)'
+        ]
+        if sheet1_df.empty: return pd.DataFrame(columns=sheet2_columns)
+        
+        sheet2_rows = []
+        for i, (idx, row) in enumerate(sheet1_df.iterrows()):
+            sheet2_row = {col: "" for col in sheet2_columns}
+            
+            if len(sheet1_df.columns) >= 1: sheet2_row['C열(주문일)'] = str(row.iloc[0])
+            if len(sheet1_df.columns) >= 2: sheet2_row['D열(아이디주문번호)'] = str(row.iloc[1])
+            if len(sheet1_df.columns) >= 3: sheet2_row['F열(주문자명)'] = str(row.iloc[2])
+            
             if len(sheet1_df.columns) >= 4:
-                name, addr = str(r.iloc[3]), str(r.iloc[10]) if len(sheet1_df.columns) >= 11 else ""
-                a3 = self.extract_third_word_from_address(addr)
-                d['G열(위탁자명)'] = f"{name}({a3})" if a3 else name
-            if len(sheet1_df.columns) >= 5:
-                raw = str(r.iloc[4]).strip()
-                m = re.match(r'^([^)]+\)[^)]*?)\s+(.+)$', raw)
-                if m:
-                    d['H열(브랜드)'] = lt.remove_size_patterns_from_brand(m.group(1))
-                    d['I열(상품명)'] = lt.remove_keywords(lt.remove_front_parentheses(m.group(2)), self.keyword_list)
-                elif ' ' in raw:
-                    p = raw.split(' ', 1)
-                    d['H열(브랜드)'] = lt.remove_size_patterns_from_brand(p[0])
-                    d['I열(상품명)'] = lt.remove_keywords(lt.remove_front_parentheses(p[1]), self.keyword_list)
-                else: d['I열(상품명)'] = raw
-            if len(sheet1_df.columns) >= 6: d['J열(색상)'], d['K열(사이즈)'] = lo.parse_options(str(r.iloc[5]))
-            if len(sheet1_df.columns) >= 7:
-                try: d['L열(수량)'] = int(r.iloc[6])
-                except: d['L열(수량)'] = 1
-            rows.append(d)
-        return pd.DataFrame(rows, columns=cols)
+                name = str(row.iloc[3])
+                addr = str(row.iloc[10]) if len(sheet1_df.columns) >= 11 else ""
+                addr_3rd = self.extract_third_word_from_address(addr)
+                sheet2_row['G열(위탁자명)'] = f"{name}({addr_3rd})" if addr_3rd else name
 
-    def match_row(self, b, p, s, c):
+            if len(sheet1_df.columns) >= 5:
+                raw_full = str(row.iloc[4]).strip()
+                b_match = re.match(r'^([^)]+\)[^)]*?)\s+(.+)$', raw_full)
+                if b_match:
+                    sheet2_row['H열(브랜드)'] = lt.remove_size_patterns_from_brand(b_match.group(1))
+                    sheet2_row['I열(상품명)'] = lt.remove_keywords(lt.remove_front_parentheses(b_match.group(2)), self.keyword_list)
+                elif ' ' in raw_full:
+                    parts = raw_full.split(' ', 1)
+                    sheet2_row['H열(브랜드)'] = lt.remove_size_patterns_from_brand(parts[0])
+                    sheet2_row['I열(상품명)'] = lt.remove_keywords(lt.remove_front_parentheses(parts[1]), self.keyword_list)
+                else:
+                    sheet2_row['H열(브랜드)'] = ""
+                    # 🌟 이전에 누락되었던 예외 상황에서의 키워드 제거 로직 추가
+                    sheet2_row['I열(상품명)'] = lt.remove_keywords(lt.remove_front_parentheses(raw_full), self.keyword_list)
+            
+            if len(sheet1_df.columns) >= 6:
+                sheet2_row['J열(색상)'], sheet2_row['K열(사이즈)'] = lo.parse_options(str(row.iloc[5]))
+                
+            if len(sheet1_df.columns) >= 7:
+                try: sheet2_row['L열(수량)'] = int(row.iloc[6])
+                except: sheet2_row['L열(수량)'] = 1
+                
+            if len(sheet1_df.columns) >= 8: sheet2_row['M열(옵션가)'] = str(row.iloc[7])
+            if len(sheet1_df.columns) >= 9:
+                name = str(row.iloc[8])
+                addr = str(row.iloc[10]) if len(sheet1_df.columns) >= 11 else ""
+                addr_3rd = self.extract_third_word_from_address(addr)
+                sheet2_row['R열(이름)'] = f"{name}({addr_3rd})" if addr_3rd else name
+            if len(sheet1_df.columns) >= 10: sheet2_row['S열(전화번호)'] = str(row.iloc[9])
+            if len(sheet1_df.columns) >= 11: sheet2_row['T열(주소)'] = str(row.iloc[10])
+            if len(sheet1_df.columns) >= 12: sheet2_row['V열(배송메세지)'] = str(row.iloc[11])
+            
+            sheet2_rows.append(sheet2_row)
+
+        return pd.DataFrame(sheet2_rows, columns=sheet2_columns)
+
+    def match_row(self, b: str, p: str, s: str, c: str) -> Tuple:
         if not p: return "매칭 실패", "", "", False, 0.0, []
-        b_n = lt.apply_smart_synonyms(b, self.synonym_rules, 'brand')
-        b_c = "".join(re.sub(r'[\[\]\(\)]', '', b_n).lower().split())
-        p_n = lt.normalize_name(p, self.keyword_list, self.synonym_rules, 'product')
+        
+        b_norm = lt.apply_smart_synonyms(b, self.synonym_rules, 'brand')
+        b_clean = "".join(re.sub(r'[\[\]\(\)]', '', b_norm).lower().split())
+        p_norm = lt.normalize_name(p, self.keyword_list, self.synonym_rules, 'product')
+        
+        search_brands = set([b_clean]) if b_clean else set()
+        
         best_m, best_s = None, 0.0
-        cands = self.brand_index.get(b_c, [])
-        for rd in cands:
-            row_p_n = lt.normalize_name(rd.get('상품명', ''), self.keyword_list, self.synonym_rules, 'product')
-            p_sim = ls.get_sim(p_n, row_p_n)
+        candidates = []
+        for sb in search_brands: candidates.extend(self.brand_index.get(sb, []))
+        
+        for rd in candidates:
+            row_p_norm = lt.normalize_name(rd.get('상품명', ''), self.keyword_list, self.synonym_rules, 'product')
+            p_sim = ls.get_sim(p_norm, row_p_norm)
+            
             if p_sim >= 80:
-                db_c, db_s = lo.get_db_option_list(rd.get('옵션입력', ''))
-                up_c_n = lt.apply_smart_synonyms(c, self.synonym_rules, 'option')
-                up_s_n = lt.apply_smart_synonyms(s, self.synonym_rules, 'option')
-                if lo.check_option_inclusion(up_c_n, db_c) and lo.check_option_inclusion(up_s_n, db_s):
+                db_colors, db_sizes = lo.get_db_option_list(rd.get('옵션입력', ''))
+                up_c_norm = lt.apply_smart_synonyms(c, self.synonym_rules, 'option')
+                up_s_norm = lt.apply_smart_synonyms(s, self.synonym_rules, 'option')
+                
+                c_ok = lo.check_option_inclusion(up_c_norm, db_colors)
+                s_ok = lo.check_option_inclusion(up_s_norm, db_sizes)
+                
+                if c_ok and s_ok:
                     score = p_sim * 0.5 + 50.0
-                    if score > best_s: best_s, best_m = score, rd
-        if best_m and best_s >= 60: return best_m.get('공급가', 0), best_m.get('중도매', ''), f"{best_m.get('브랜드', '')} {best_m.get('상품명', '')}", True, best_s, []
-        suggs = ls.get_4step_recommendations(p_n, {b_c}, self.product_index, self.brand_data, "".join(f"{b}{p}".lower().split()), c, s)
+                    if score > best_s: 
+                        best_s, best_m = score, rd
+
+        if best_m and best_s >= 60:
+            return best_m.get('공급가', 0), best_m.get('중도매', ''), f"{best_m.get('브랜드', '')} {best_m.get('상품명', '')}", True, best_s, []
+
+        full_q = "".join(f"{b}{p}".lower().split())
+        suggs = ls.get_4step_recommendations(p_norm, search_brands, self.product_index, self.brand_data, full_q, c, s)
         return "매칭 실패", "", "", False, best_s, suggs
 
-    def process_matching(self, sheet2_df, progress_callback=None):
-        results, failed = [], []
-        for i, row in sheet2_df.iterrows():
-            if progress_callback: progress_callback(i + 1, len(sheet2_df))
-            b, p, s, c = row.get('H열(브랜드)', ''), row.get('I열(상품명)', ''), row.get('K열(사이즈)', ''), row.get('J열(색상)', '')
+    def process_matching(self, sheet2_df: pd.DataFrame, progress_callback=None) -> Tuple[pd.DataFrame, List[Dict]]:
+        total_rows = len(sheet2_df)
+        failed_products = []
+        results_n, results_o, results_w, results_status = [], [], [], []
+        
+        for index, row in sheet2_df.iterrows():
+            if progress_callback: progress_callback(index + 1, total_rows)
+            
+            b = str(row.get('H열(브랜드)', '')).strip()
+            p = str(row.get('I열(상품명)', '')).strip()
+            s = str(row.get('K열(사이즈)', '')).strip()
+            c = str(row.get('J열(색상)', '')).strip()
             qty = row.get('L열(수량)', 1)
-            pr, wh, fn, ok, sc, su = self.match_row(b, p, s, c)
-            res = {**row, 'N열(중도매명)': wh if ok else "", 'O열(도매가격)': pr if ok else 0, '매칭_상태': "정확매칭" if sc >= 90 else "유사매칭" if ok else "매칭실패"}
-            try: res['W열(금액)'] = float(pr) * int(qty) if ok else 0
-            except: res['W열(금액)'] = 0
-            results.append(res)
-            if not ok: failed.append({'발주_브랜드': b, '발주_상품명': p, '옵션': f"{c}/{s}", '💡추천_1순위': su[0] if len(su)>0 else ""})
-        return pd.DataFrame(results), failed
+
+            price, wh, full_name, ok, score, suggs = self.match_row(b, p, s, c)
+
+            if ok and price != "매칭 실패":
+                results_n.append(wh)
+                results_o.append(price)
+                results_status.append("정확매칭" if score >= 90 else "유사매칭")
+                try: results_w.append(float(price) * int(qty))
+                except: results_w.append(0)
+            else:
+                results_n.append("")
+                results_o.append(0)
+                results_w.append(0)
+                results_status.append("매칭실패")
+                
+                failed_products.append({
+                    '발주_브랜드': b, '발주_상품명': p, '옵션': f"{c}/{s}", 
+                    '💡추천_1순위': suggs[0] if len(suggs) > 0 else "추천 없음",
+                    '💡추천_2순위': suggs[1] if len(suggs) > 1 else "추천 없음",
+                    '💡추천_3순위': suggs[2] if len(suggs) > 2 else "추천 없음",
+                    '💡추천_4순위': suggs[3] if len(suggs) > 3 else "추천 없음"
+                })
+
+        sheet2_df['N열(중도매명)'] = results_n
+        sheet2_df['O열(도매가격)'] = results_o
+        sheet2_df['W열(금액)'] = results_w
+        sheet2_df['매칭_상태'] = results_status
+
+        return sheet2_df, failed_products
