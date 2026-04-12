@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-브랜드 매칭 시스템 - 매칭 실패 시 유사 상품 추천(도매가 포함) 기능 탑재 버전
+브랜드 매칭 시스템 - [최종] 띄어쓰기 무시 기능 및 스마트 추천(도매가 포함) 탑재 버전
 """
 
 import pandas as pd
@@ -123,6 +123,8 @@ class BrandMatchingSystem:
         for row_dict in brand_data_records:
             brand = str(row_dict.get('브랜드', '')).strip().lower()
             brand_clean = re.sub(r'[\[\]\(\)]', '', brand).strip()
+            # 🌟 [띄어쓰기 무시 기능] 브랜드 인덱스 생성 시 모든 공백 제거
+            brand_clean = re.sub(r'\s+', '', brand_clean)
             if brand_clean and brand_clean != 'nan':
                 if brand_clean not in self.brand_index:
                     self.brand_index[brand_clean] = []
@@ -304,7 +306,10 @@ class BrandMatchingSystem:
 
     def calculate_similarity(self, str1: str, str2: str) -> float:
         if not str1 or not str2: return 0.0
-        str1, str2 = str1.lower().strip(), str2.lower().strip()
+        # 🌟 [띄어쓰기 무시 기능] 유사도 계산 전 모든 공백 제거
+        str1 = re.sub(r'\s+', '', str1.lower().strip())
+        str2 = re.sub(r'\s+', '', str2.lower().strip())
+        
         if str1 == str2: return 100.0
         
         cache_key = (str1, str2)
@@ -387,7 +392,8 @@ class BrandMatchingSystem:
                         except:
                             normalized = re.sub(re.escape(cleaned_keyword), '', normalized, flags=re.IGNORECASE)
                             
-            normalized = re.sub(r'\s+', ' ', normalized).strip()
+            # 🌟 [띄어쓰기 무시 기능] 최종 반환 직전에 상품명의 모든 띄어쓰기를 완전히 삭제합니다.
+            normalized = re.sub(r'\s+', '', normalized)
             
             if len(self._normalized_cache) >= self._max_cache_size: self._normalized_cache.clear()
             self._normalized_cache[name_str] = normalized
@@ -473,19 +479,21 @@ class BrandMatchingSystem:
     def match_row(self, brand: str, product: str, size: str, color: str = "") -> Tuple[str, str, str, bool, float, List[str]]:
         brand, product = str(brand).strip(), str(product).strip()
         
-        # 1. 아예 입력값이 없는 경우
         if not brand or not product: 
             return "매칭 실패", "", "", False, 0.0, []
             
         brand_clean = re.sub(r'[\[\]\(\)]', '', brand).strip().lower()
+        # 🌟 [띄어쓰기 무시 기능] 브랜드 비교 전 공백 삭제
+        brand_clean = re.sub(r'\s+', '', brand_clean)
+        
         normalized_product = self.normalize_product_name(product)
         
         search_brands = set([brand_clean])
         
-        # 동의어 확장
+        # 🌟 [띄어쓰기 무시 기능] 동의어 사전을 뒤질 때도 양쪽 다 공백을 무시하고 비교
         for std_word, syn_words in self.synonym_dict.items():
-            std_word_lower = std_word.lower()
-            syn_words_lower = [s.lower() for s in syn_words]
+            std_word_lower = re.sub(r'\s+', '', std_word.lower())
+            syn_words_lower = [re.sub(r'\s+', '', s.lower()) for s in syn_words]
             if brand_clean == std_word_lower or brand_clean in syn_words_lower:
                 search_brands.add(std_word_lower)
                 search_brands.update(syn_words_lower)
@@ -494,15 +502,17 @@ class BrandMatchingSystem:
         for b in search_brands:
             candidate_rows.extend(self.brand_index.get(b, []))
             
-        # 2. 브랜드를 아예 찾지 못한 경우 -> DB 전체에서 텍스트 기반으로 가장 비슷한 상품 2개 추출
+        # 브랜드를 아예 찾지 못한 경우 -> DB 전체에서 텍스트 기반으로 가장 비슷한 상품 2개 추출
         if not candidate_rows: 
             fallback_cands = []
-            upload_full = f"{brand} {product}".strip().lower()
+            # 🌟 [띄어쓰기 무시 기능] 추천 상품 찾을 때도 공백 다 지우고 비교
+            upload_full = re.sub(r'\s+', '', f"{brand}{product}".lower())
+            
             if self.brand_data is not None and not self.brand_data.empty:
                 for row_dict in self.brand_data.to_dict('records'):
-                    db_full = f"{str(row_dict.get('브랜드', ''))} {str(row_dict.get('상품명', ''))}".strip().lower()
+                    db_full = re.sub(r'\s+', '', f"{str(row_dict.get('브랜드', ''))}{str(row_dict.get('상품명', ''))}".lower())
                     sim = SequenceMatcher(None, upload_full, db_full).ratio() * 100
-                    if sim >= 20:  # 최소 20% 이상 유사한 것만
+                    if sim >= 20: 
                         fallback_cands.append({'row_dict': row_dict, 'total_sim': sim})
                 
                 fallback_cands.sort(key=lambda x: x['total_sim'], reverse=True)
@@ -514,7 +524,6 @@ class BrandMatchingSystem:
                 try: price_str = f"{int(price):,}원"
                 except: price_str = f"{price}원"
                 
-                # 🌟 도매가(공급가) 정보 추가된 부분
                 top_2_suggestions.append(f"[{rd.get('브랜드', '')}] {rd.get('상품명', '')} | 도매가: {price_str} ({c['total_sim']:.1f}%)")
                 
             return "매칭 실패", "", "", False, 0.0, top_2_suggestions
@@ -527,7 +536,6 @@ class BrandMatchingSystem:
             row_product = self.normalize_product_name(str(row_dict.get('상품명', '')).strip())
             product_similarity = self.calculate_similarity(normalized_product, row_product)
             
-            # 상품명 유사도가 어느 정도 있는 것들만 평가
             if product_similarity >= 30:
                 color_similarity = 100.0
                 if color:
@@ -563,7 +571,6 @@ class BrandMatchingSystem:
             try: price_str = f"{int(price):,}원"
             except: price_str = f"{price}원"
             
-            # 🌟 도매가(공급가) 정보 추가된 부분
             top_2_suggestions.append(f"[{rd.get('브랜드', '')}] {rd.get('상품명', '')} | 도매가: {price_str} ({c['total_sim']:.1f}%)")
 
         if best_match and best_similarity >= 60:
@@ -593,7 +600,6 @@ class BrandMatchingSystem:
             color = str(row_dict.get('J열(색상)', '')).strip()
             quantity = row_dict.get('L열(수량)', 1)
 
-            # 변경된 리턴값 (추천 목록 포함)을 받아옵니다.
             공급가, 중도매, 브랜드상품명, success, sim_score, suggestions = self.match_row(brand, product, size, color)
             results['종합_유사도'][current_index] = sim_score
 
@@ -605,7 +611,6 @@ class BrandMatchingSystem:
                 except: results['W열(금액)'][current_index] = 0
             else:
                 results['매칭_상태'][current_index] = "매칭실패"
-                # 실패 데이터와 추천 데이터 정리
                 failed_products.append({
                     '발주_브랜드': brand, 
                     '발주_상품명': product, 
