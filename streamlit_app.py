@@ -5,15 +5,21 @@ from io import BytesIO
 from brand_matching_system import BrandMatchingSystem
 from database import SessionLocal, Synonym, Keyword, MasterProduct
 
-st.set_page_config(page_title="2026 브랜드 매칭 시스템", layout="wide")
+st.set_page_config(page_title="2026 브랜드 매칭 시스템", layout="wide", initial_sidebar_state="expanded")
 
 if 'match_state' not in st.session_state:
-    st.session_state.match_state = {'completed': False, 'final_df': None, 'failed_products': [], 'total': 0, 'success': 0, 'fail': 0}
+    st.session_state.match_state = {
+        'completed': False, 'final_df': None, 'failed_products': [],
+        'total_count': 0, 'success_count': 0, 'fail_count': 0
+    }
 
 with st.sidebar:
-    st.title("⚙️ 2026 시스템")
-    menu = st.radio("메뉴", ["✅ 발주서 자동 매칭", "📚 동의어/키워드 관리", "📊 DB 연동 상태"])
-    if st.button("🗑️ 초기화"):
+    st.title("⚙️ 2026 시스템 메뉴")
+    st.markdown("---")
+    menu = st.radio("작업 메뉴를 선택하세요", ["✅ 발주서 자동 매칭", "📚 동의어/키워드 관리", "📊 DB 연동 상태"])
+    st.markdown("---")
+    st.info("💡 Tip: 화면을 이동해도 작업 내역은 유지됩니다.")
+    if st.button("🗑️ 현재 작업내역 지우기", use_container_width=True):
         st.session_state.match_state['completed'] = False
         st.rerun()
 
@@ -21,66 +27,218 @@ with st.sidebar:
 def load_engine(): return BrandMatchingSystem()
 engine = load_engine()
 
+# ==========================================
+# 🚀 메인 화면 1: 발주서 자동 매칭
+# ==========================================
 if menu == "✅ 발주서 자동 매칭":
-    st.title("🚀 발주서 자동 매칭")
-    files = st.file_uploader("엑셀 파일", type=['xlsx', 'xls', 'csv'], accept_multiple_files=True)
-    if files and st.button("🏁 매칭 시작", use_container_width=True):
-        all_data = []
-        for f in files:
-            df = pd.read_csv(f) if f.name.endswith('.csv') else pd.read_excel(f)
-            if not df.empty: all_data.append(engine.convert_sheet1_to_sheet2(df))
-        if all_data:
-            combined = pd.concat(all_data, ignore_index=True)
-            status_text = st.empty()
-            prog_bar = st.progress(0)
-            def update(c, t):
-                prog_bar.progress(c/t)
-                status_text.text(f"⏳ 진행 중: {c} / {t} 건 처리 완료 ({(c/t)*100:.1f}%)")
-            final, failed = engine.process_matching(combined, progress_callback=update)
-            st.session_state.match_state.update({'final_df': final, 'failed_products': failed, 'completed': True, 'total': len(final), 'success': len(final)-len(failed), 'fail': len(failed)})
-            st.rerun()
+    st.title("🚀 2026 브랜드 매칭 시스템")
+    st.markdown("---")
+    uploaded_files = st.file_uploader("발주 엑셀 파일 업로드", type=['xlsx', 'xls', 'csv'], accept_multiple_files=True)
+
+    if uploaded_files:
+        if st.button("🏁 통합 매칭 시작", use_container_width=True):
+            try:
+                dfs = []
+                for file in uploaded_files:
+                    df = pd.read_csv(file) if file.name.endswith('.csv') else pd.read_excel(file) 
+                    df = df.dropna(how='all') 
+                    if not df.empty: dfs.append(engine.convert_sheet1_to_sheet2(df))
+                
+                if not dfs:
+                    st.warning("유효한 데이터가 없습니다.")
+                    st.stop()
+
+                combined_sheet2_df = pd.concat(dfs, ignore_index=True)
+                total_input_rows = len(combined_sheet2_df)
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                def update_progress(current, total):
+                    progress_bar.progress(current / total)
+                    status_text.markdown(f"**진행률:** {int((current/total)*100)}% ({current}건 / {total}건 처리 중)")
+                
+                with st.spinner(f"🤖 매칭 엔진 가동 중..."):
+                    final_df, failed_products = engine.process_matching(combined_sheet2_df, progress_callback=update_progress)
+                
+                st.session_state.match_state.update({
+                    'final_df': final_df,
+                    'failed_products': failed_products,
+                    'completed': True,
+                    'total_count': total_input_rows,
+                    'success_count': total_input_rows - len(failed_products),
+                    'fail_count': len(failed_products)
+                })
+                st.rerun()
+            except Exception as e: 
+                st.error(f"오류: {e}")
 
     if st.session_state.match_state['completed']:
         s = st.session_state.match_state
-        st.success("✅ 매칭이 완료되었습니다!")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("총 발주 건수", f"{s['total']}건")
-        c2.metric("매칭 성공", f"{s['success']}건", delta=f"{(s['success']/s['total'])*100:.1f}%", delta_color="normal")
-        c3.metric("매칭 실패", f"{s['fail']}건", delta=f"-{(s['fail']/s['total'])*100:.1f}%", delta_color="inverse")
+        st.success("🎉 매칭 완료!")
         
-        st.dataframe(s['final_df'].head(100))
-        out = BytesIO()
-        with pd.ExcelWriter(out, engine='openpyxl') as writer:
-            s['final_df'].to_excel(writer, index=False, sheet_name='매칭결과')
-            if s['failed_products']: pd.DataFrame(s['failed_products']).to_excel(writer, index=False, sheet_name='실패추천')
-        st.download_button("📥 결과 엑셀 다운로드", data=out.getvalue(), file_name="매칭완료.xlsx", use_container_width=True)
+        col1, col2, col3 = st.columns(3)
+        col1.metric("총 발주 건수", f"{s['total_count']}건")
+        col2.metric("매칭 성공", f"{s['success_count']}건")
+        col3.metric("매칭 실패", f"{s['fail_count']}건")
+        
+        st.dataframe(s['final_df'].head(50))
+        
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            s['final_df'].to_excel(writer, index=False, sheet_name='통합_전체_매칭결과')
+            if s['failed_products']: 
+                pd.DataFrame(s['failed_products']).to_excel(writer, index=False, sheet_name='실패건_유사상품추천')
+        st.download_button("📥 통합 결과 다운로드", data=output.getvalue(), file_name="매칭완료.xlsx", use_container_width=True)
 
+# ==========================================
+# 📚 서브 화면 2: 동의어/키워드 관리 (🌟 누락되었던 목록 보기 완벽 복구!)
+# ==========================================
 elif menu == "📚 동의어/키워드 관리":
-    st.title("📚 관리")
-    t1, t2 = st.tabs(["동의어", "키워드"])
-    with t1:
-        with st.form("syn_form", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            std = col1.text_input("기준 단어(정답)")
-            syn = col2.text_input("동의어(오타)")
-            c1, c2, c3 = st.columns(3)
-            b, p, o = c1.checkbox("브랜드", True), c2.checkbox("상품명", True), c3.checkbox("옵션", False)
-            exact = st.radio("방식", ["부분포함", "완전일치"]) == "완전일치"
-            if st.form_submit_button("등록") and std and syn:
-                db = SessionLocal()
-                db.add(Synonym(standard_word=std, synonym_word=syn, apply_brand=b, apply_product=p, apply_option=o, is_exact_match=exact))
-                db.commit(); db.close(); st.cache_resource.clear(); st.success("등록완료"); st.rerun()
-    with t2:
-        with st.form("kw_form", clear_on_submit=True):
-            kw = st.text_input("제외 키워드")
-            if st.form_submit_button("등록") and kw:
-                db = SessionLocal(); db.add(Keyword(keyword_text=kw)); db.commit(); db.close(); st.cache_resource.clear(); st.success("등록완료"); st.rerun()
+    st.title("📚 스마트 동의어 및 제외 키워드 관리")
+    if st.button("🔄 매칭 엔진 기억 새로고침"):
+        st.cache_resource.clear()
+        st.success("업데이트 완료!")
+        st.rerun()
 
+    tab1, tab2 = st.tabs(["📚 동의어 사전 추가/삭제", "✂️ 제외 키워드 추가/삭제"])
+    
+    with tab1:
+        with st.form("synonym_form", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            with col1: std_word = st.text_input("기준 단어 (정답)")
+            with col2: syn_word = st.text_input("동의어 (오타)")
+            
+            st.markdown("📍 **어디에 적용하시겠습니까?**")
+            c1, c2, c3 = st.columns(3)
+            with c1: apply_brand = st.checkbox("☑️ 브랜드", value=True)
+            with c2: apply_product = st.checkbox("☑️ 상품명", value=True)
+            with c3: apply_option = st.checkbox("☑️ 옵션 (색상/사이즈)", value=False)
+            
+            match_type = st.radio("⚙️ 치환 강도 조절", ["🟢 부분 포함", "🔴 완전 일치"])
+            is_exact = True if "완전 일치" in match_type else False
+
+            if st.form_submit_button("등록하기") and std_word and syn_word:
+                if not (apply_brand or apply_product or apply_option): 
+                    st.error("범위를 선택하세요!")
+                else:
+                    db = SessionLocal()
+                    try:
+                        if db.query(Synonym).filter(Synonym.synonym_word == syn_word.strip()).first():
+                            st.warning("🚨 이미 등록된 동의어입니다.")
+                        else:
+                            db.add(Synonym(standard_word=std_word.strip(), synonym_word=syn_word.strip(), apply_brand=apply_brand, apply_product=apply_product, apply_option=apply_option, is_exact_match=is_exact))
+                            db.commit()
+                            st.success("✅ 등록되었습니다!")
+                            st.cache_resource.clear()
+                            st.rerun()
+                    finally: db.close()
+
+        # 🌟 삭제되었던 동의어 목록 출력 및 삭제 코드 복구
+        st.markdown("---")
+        db = SessionLocal()
+        syns = db.query(Synonym).filter(Synonym.is_active == True).all()
+        if syns:
+            def get_scope_str(s):
+                res = []
+                if s.apply_brand: res.append("브랜드")
+                if s.apply_product: res.append("상품명")
+                if s.apply_option: res.append("옵션")
+                return ", ".join(res)
+
+            df_syns = pd.DataFrame([{
+                "선택": False, "정답": s.standard_word, "오타": s.synonym_word,
+                "적용범위": get_scope_str(s), "강도": "완전일치" if s.is_exact_match else "부분포함"
+            } for s in syns])
+            edited_df = st.data_editor(df_syns, column_config={"선택": st.column_config.CheckboxColumn("삭제 선택", default=False)}, hide_index=True, use_container_width=True)
+            selected = edited_df[edited_df["선택"] == True]
+            if not selected.empty:
+                target = selected.iloc[0]["오타"]
+                if st.button("🗑️ 선택 항목 삭제하기"):
+                    try:
+                        to_del = db.query(Synonym).filter(Synonym.synonym_word == target).first()
+                        if to_del: 
+                            db.delete(to_del)
+                            db.commit()
+                            st.cache_resource.clear()
+                            st.rerun()
+                    finally: pass
+        db.close()
+
+    with tab2:
+        with st.form("keyword_form", clear_on_submit=True):
+            new_keyword = st.text_input("제외 키워드 입력")
+            if st.form_submit_button("등록") and new_keyword:
+                db = SessionLocal()
+                try:
+                    if not db.query(Keyword).filter(Keyword.keyword_text == new_keyword.strip()).first():
+                        db.add(Keyword(keyword_text=new_keyword.strip()))
+                        db.commit()
+                        st.success("✅ 등록!")
+                        st.cache_resource.clear()
+                        st.rerun()
+                finally: db.close()
+
+        # 🌟 삭제되었던 제외 키워드 목록 출력 및 삭제 코드 복구
+        db = SessionLocal()
+        kws = db.query(Keyword).all()
+        if kws:
+            df_kws = pd.DataFrame([{"선택": False, "키워드": k.keyword_text} for k in kws])
+            edited_kw = st.data_editor(df_kws, column_config={"선택": st.column_config.CheckboxColumn("삭제", default=False)}, hide_index=True, use_container_width=True)
+            sel_kw = edited_kw[edited_kw["선택"] == True]
+            if not sel_kw.empty:
+                t_kw = sel_kw.iloc[0]["키워드"]
+                if st.button("🗑️ 삭제"):
+                    to_del = db.query(Keyword).filter(Keyword.keyword_text == t_kw).first()
+                    if to_del: 
+                        db.delete(to_del)
+                        db.commit()
+                        st.cache_resource.clear()
+                        st.rerun()
+        db.close()
+
+# ==========================================
+# 📊 서브 화면 3: DB 상태
+# ==========================================
 elif menu == "📊 DB 연동 상태":
-    st.title("📊 마스터 DB")
-    if engine.brand_data is not None: st.success(f"🟢 연결됨 ({len(engine.brand_data):,}건)")
-    with st.form("db_search"):
-        q = st.text_input("🔍 검색어 입력 (브랜드/상품명)", placeholder="엔터를 치면 검색 결과가 유지됩니다")
-        if st.form_submit_button("검색") or q:
-            res = engine.brand_data[engine.brand_data['브랜드'].str.contains(q, na=False, case=False) | engine.brand_data['상품명'].str.contains(q, na=False, case=False)]
-            st.write(f"결과: {len(res)}건"); st.dataframe(res, use_container_width=True)
+    st.title("📊 마스터 DB 연동 및 검색 관리")
+    
+    if engine.brand_data is not None and not engine.brand_data.empty: 
+        st.success(f"🟢 AWS DB 연결 완료 (총 {len(engine.brand_data):,}건의 마스터 데이터가 존재합니다)")
+    else:
+        st.error("🔴 DB에 데이터가 없습니다.")
+    
+    st.markdown("---")
+    
+    st.subheader("🔍 마스터 DB 검색")
+    with st.form("search_form"):
+        search_query = st.text_input("찾으시는 브랜드명이나 상품명을 입력하세요", placeholder="검색어 입력 후 Enter 또는 검색 버튼 클릭")
+        search_submit = st.form_submit_button("검색 실행")
+    
+    if (search_submit or search_query) and engine.brand_data is not None:
+        df_display = engine.brand_data.copy()
+        if search_query:
+            mask = df_display['브랜드'].str.contains(search_query, case=False, na=False) | \
+                   df_display['상품명'].str.contains(search_query, case=False, na=False)
+            df_display = df_display[mask]
+            
+        st.write(f"**검색 결과:** 총 {len(df_display):,}건")
+        st.dataframe(df_display, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("📥 신규 마스터 DB 업로드")
+    db_upload_file = st.file_uploader("마스터 DB 엑셀 파일 업로드", type=['xlsx', 'xls', 'csv'])
+    if db_upload_file and st.button("🚀 DB에 추가", use_container_width=True):
+        with st.spinner("AWS DB에 저장 중입니다..."):
+            try:
+                new_db = pd.read_csv(db_upload_file) if db_upload_file.name.endswith('.csv') else pd.read_excel(db_upload_file)
+                db = SessionLocal()
+                for _, r in new_db.iterrows():
+                    b_val = str(r.get('브랜드', '')).strip()
+                    if b_val and b_val != 'nan':
+                        db.add(MasterProduct(brand=b_val, product_name=str(r.get('상품명', '')).strip(), options=str(r.get('옵션입력', '')).strip(), wholesale_name=str(r.get('중도매', '')).strip(), supply_price=str(r.get('공급가', '0')).strip()))
+                db.commit()
+                st.success("✅ 성공적으로 추가되었습니다!")
+                st.cache_resource.clear()
+                st.rerun()
+            finally: db.close()
