@@ -86,7 +86,7 @@ class BrandMatchingSystem:
         for row_dict in self.brand_data.to_dict('records'):
             brand = str(row_dict.get('브랜드', '')).strip().lower()
             brand_clean = re.sub(r'[\[\]\(\)]', '', brand).strip()
-            brand_clean = re.sub(r'\s+', '', brand_clean) # 띄어쓰기 압축
+            brand_clean = re.sub(r'\s+', '', brand_clean)
             if brand_clean and brand_clean != 'nan':
                 if brand_clean not in self.brand_index:
                     self.brand_index[brand_clean] = []
@@ -209,8 +209,17 @@ class BrandMatchingSystem:
         if not name or pd.isna(name): return ""
         n = str(name).lower()
         n = re.sub(r'\([^)]*\)|\*[^*]*\*', '', n)
+        
+        # 1. 제외 키워드 삭제
         for kw in self.keyword_list:
             if kw: n = n.replace(kw.lower(), '')
+            
+        # 🌟 2. [신규 탑재] 상품명 내부 동의어 부분 치환 (예: 나나팬츠 -> 나나바지)
+        for std_word, syn_words in self.synonym_dict.items():
+            for syn in syn_words:
+                if syn.lower() in n:
+                    n = n.replace(syn.lower(), std_word.lower())
+                    
         return re.sub(r'\s+', '', n)
 
     def convert_sheet1_to_sheet2(self, sheet1_df: pd.DataFrame) -> pd.DataFrame:
@@ -297,6 +306,14 @@ class BrandMatchingSystem:
         brand_clean = re.sub(r'[\[\]\(\)]', '', brand).strip().lower()
         brand_clean = re.sub(r'\s+', '', brand_clean)
         
+        # 🌟 3. [신규 탑재] 브랜드명 내부의 동의어도 치환 (혹시 모를 나나팬츠 브랜드를 위해 방어망)
+        for std_word, syn_words in self.synonym_dict.items():
+            for syn in syn_words:
+                syn_clean = re.sub(r'\s+', '', syn.lower())
+                if syn_clean in brand_clean:
+                    std_clean = re.sub(r'\s+', '', std_word.lower())
+                    brand_clean = brand_clean.replace(syn_clean, std_clean)
+
         normalized_product = self.normalize_product_name(product)
         search_brands = set([brand_clean])
         
