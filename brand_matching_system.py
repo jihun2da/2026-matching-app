@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-브랜드 매칭 시스템 - [최종 완전체] 진행률 게이지 + 띄어쓰기 무시 + 다중 병합 지원
+브랜드 매칭 시스템 - [무결점 완전체] 누락 방지 + 다중 시트/다중 파일 완벽 지원
 """
 
 import pandas as pd
@@ -90,7 +90,7 @@ class BrandMatchingSystem:
         for row_dict in self.brand_data.to_dict('records'):
             brand = str(row_dict.get('브랜드', '')).strip().lower()
             brand_clean = re.sub(r'[\[\]\(\)]', '', brand).strip()
-            brand_clean = re.sub(r'\s+', '', brand_clean) # 띄어쓰기 압축
+            brand_clean = re.sub(r'\s+', '', brand_clean) 
             if brand_clean and brand_clean != 'nan':
                 if brand_clean not in self.brand_index:
                     self.brand_index[brand_clean] = []
@@ -217,7 +217,6 @@ class BrandMatchingSystem:
             if kw: n = n.replace(kw.lower(), '')
         return re.sub(r'\s+', '', n)
 
-    # 🌟 [오류 해결] 폼 변환 로직 (전체 복구)
     def convert_sheet1_to_sheet2(self, sheet1_df: pd.DataFrame) -> pd.DataFrame:
         sheet2_columns = [
             'A열(ㅇ)', 'B열(미등록주문)', 'C열(주문일)', 'D열(아이디주문번호)', 'E열(ㅇ)',
@@ -300,12 +299,11 @@ class BrandMatchingSystem:
             return "매칭 실패", "", "", False, 0.0, []
             
         brand_clean = re.sub(r'[\[\]\(\)]', '', brand).strip().lower()
-        brand_clean = re.sub(r'\s+', '', brand_clean) # 띄어쓰기 무시
+        brand_clean = re.sub(r'\s+', '', brand_clean)
         
         normalized_product = self.normalize_product_name(product)
         search_brands = set([brand_clean])
         
-        # 동의어 검색 시에도 띄어쓰기 무시
         for std_word, syn_words in self.synonym_dict.items():
             std_word_lower = re.sub(r'\s+', '', std_word.lower())
             syn_words_lower = [re.sub(r'\s+', '', s.lower()) for s in syn_words]
@@ -364,9 +362,8 @@ class BrandMatchingSystem:
 
         return "매칭 실패", "", "", False, best_similarity, top_2
 
-    # 🌟 진행률 보고 기능이 완벽하게 결합된 process_matching
-    def process_matching(self, sheet1_df: pd.DataFrame, progress_callback=None) -> Tuple[pd.DataFrame, List[Dict]]:
-        sheet2_df = self.convert_sheet1_to_sheet2(sheet1_df)
+    # 🌟 [수정핵심] process_matching은 이제 '이미 변환이 끝난' sheet2_df를 받아서 매칭만 집중합니다.
+    def process_matching(self, sheet2_df: pd.DataFrame, progress_callback=None) -> Tuple[pd.DataFrame, List[Dict]]:
         if sheet2_df.empty: return sheet2_df, []
 
         total_rows = len(sheet2_df)
@@ -378,7 +375,6 @@ class BrandMatchingSystem:
         results_status = []
         
         for index, row in sheet2_df.iterrows():
-            # 화면(UI)으로 현재 진행률 쏴주기
             if progress_callback:
                 progress_callback(index + 1, total_rows)
 
