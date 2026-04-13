@@ -143,18 +143,19 @@ class BrandMatchingSystem:
         p_threshold = weights.get('p_threshold', 80)
         p_w = weights.get('p_w', 0.5)
         o_w = weights.get('o_w', 50.0)
-        b_w = weights.get('b_w', 20.0)
         
         b_norm = lt.apply_smart_synonyms(b, self.synonym_rules, 'brand')
         b_clean = "".join(re.sub(r'[\[\]\(\)]', '', b_norm).lower().split())
         p_norm = lt.normalize_name(p, self.keyword_list, self.synonym_rules, 'product')
         
-        search_brands = set([b_clean]) if b_clean else set()
-        
         candidates = []
-        for sb in search_brands: candidates.extend(self.brand_index.get(sb, []))
         
-        if not candidates:
+        # 🌟 핵심 수정: 브랜드가 주어졌다면, 100% 일치하는 브랜드 안에서만 후보를 찾습니다. 
+        # 만약 동의어 사전에도 없어서 일치하는 게 없다면 candidates는 텅 비게 되고, 즉시 실패처리 됩니다.
+        if b_clean:
+            candidates = self.brand_index.get(b_clean, [])
+        else:
+            # 엑셀에서 브랜드 자체가 누락된 경우(예: FOOV)에만 전체 DB를 구명조끼처럼 탐색합니다.
             candidates = self.db_records
             
         up_c_norm = lt.apply_smart_synonyms(c, self.synonym_rules, 'option')
@@ -174,12 +175,8 @@ class BrandMatchingSystem:
                 s_ok = lo.check_option_inclusion(up_s_norm, db_sizes)
                 
                 if c_ok and s_ok:
-                    db_b_clean = "".join(re.sub(r'[\[\]\(\)]', '', str(rd.get('브랜드', '')).lower()).split())
-                    is_b_match = (b_clean == db_b_clean) if b_clean else False
-                    
-                    actual_b_w = b_w if is_b_match else 0.0
-                    score = (p_sim * p_w) + o_w + actual_b_w
-                    
+                    # 브랜드 보너스(b_w)를 완전히 제거하고 상품명/옵션으로만 정직하게 점수 산정
+                    score = (p_sim * p_w) + o_w
                     if score > best_s: 
                         best_s, best_m = score, rd
 
@@ -187,7 +184,7 @@ class BrandMatchingSystem:
             return best_m.get('공급가', 0), best_m.get('중도매', ''), best_m, True, best_s, []
 
         suggs = ls.get_4step_recommendations(
-            p_norm, search_brands, self.db_records, up_c_norm, up_s_norm, c, s, p_threshold
+            p_norm, b_clean, self.db_records, up_c_norm, up_s_norm, c, s, p_threshold
         )
         return "매칭 실패", "", "", False, best_s, suggs
 
