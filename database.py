@@ -3,7 +3,6 @@ from sqlalchemy import create_engine, Column, Integer, String, Boolean, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
 import urllib.parse
 
-# 🌟 클라이언트님의 실제 AWS 정보
 DB_PASSWORD = urllib.parse.quote_plus("Ppooii**9098")
 SQLALCHEMY_DATABASE_URL = f"postgresql://postgres:{DB_PASSWORD}@matching-db-2026.cozmuw2eq103.us-east-1.rds.amazonaws.com:5432/matching_db"
 
@@ -18,8 +17,7 @@ class MasterProduct(Base):
     product_name = Column(String, index=True)
     options = Column(String)
     wholesale_name = Column(String)
-    # 🌟 핵심 해결: String(문자)에서 Float(숫자)로 변경하여 AWS DB 규격과 완벽하게 맞춤!
-    supply_price = Column(Float)
+    supply_price = Column(Float) # 숫자로 완벽 보존
 
 class Synonym(Base):
     __tablename__ = "synonyms"
