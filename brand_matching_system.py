@@ -10,7 +10,7 @@ from database import SessionLocal, MasterProduct, Synonym, Keyword
 class BrandMatchingSystem:
     def __init__(self):
         self.brand_data = None
-        self.db_records = [] # 🌟 속도 향상을 위한 캐시 리스트
+        self.db_records = [] 
         self.synonym_rules = [] 
         self.keyword_list = []
         self.brand_index = {}
@@ -38,10 +38,13 @@ class BrandMatchingSystem:
             prods = db.query(MasterProduct).all()
             data = []
             
-            # 🚀 [대안 1 적용] 여기서 DB 데이터를 꺼낼 때, 무거운 계산을 미리 다 해둡니다!
             for p in prods:
                 p_norm = lt.normalize_name(p.product_name, self.keyword_list, self.synonym_rules, 'product')
-                db_c, db_s = lo.get_db_option_list(p.options)
+                raw_db_c, raw_db_s = lo.get_db_option_list(p.options)
+                
+                # 🌟 핵심 해결책: DB에서 가져온 색상/사이즈에도 동의어 사전을 적용하여 확장 리스트 생성!
+                db_c_expanded = list(set(raw_db_c + [lt.apply_smart_synonyms(c, self.synonym_rules, 'option') for c in raw_db_c]))
+                db_s_expanded = list(set(raw_db_s + [lt.apply_smart_synonyms(s, self.synonym_rules, 'option') for s in raw_db_s]))
                 
                 row = {
                     '브랜드': p.brand, 
@@ -49,9 +52,11 @@ class BrandMatchingSystem:
                     '옵션입력': p.options, 
                     '중도매': p.wholesale_name, 
                     '공급가': p.supply_price,
-                    '_p_norm': p_norm,     # 🌟 미리 껍데기 벗긴 상품명 저장
-                    '_db_colors': db_c,    # 🌟 미리 쪼갠 색상 리스트 저장
-                    '_db_sizes': db_s      # 🌟 미리 쪼갠 사이즈 리스트 저장
+                    '_p_norm': p_norm,     
+                    '_db_colors': db_c_expanded,    # 검증용 동의어 확장 리스트
+                    '_db_sizes': db_s_expanded,     # 검증용 동의어 확장 리스트
+                    '_db_colors_raw': raw_db_c,     # 실패 사유 엑셀 출력용 원본
+                    '_db_sizes_raw': raw_db_s       # 실패 사유 엑셀 출력용 원본
                 }
                 data.append(row)
                 
@@ -63,7 +68,7 @@ class BrandMatchingSystem:
                 if p_norm not in self.product_index: self.product_index[p_norm] = []
                 self.product_index[p_norm].append(row)
                 
-            self.db_records = data # 빠른 반복을 위한 딕셔너리 원본 저장
+            self.db_records = data 
             self.brand_data = pd.DataFrame(data)
         finally: 
             db.close()
@@ -150,7 +155,6 @@ class BrandMatchingSystem:
         up_s_norm = lt.apply_smart_synonyms(s, self.synonym_rules, 'option')
         
         for rd in candidates:
-            # 🚀 무거운 연산 제거: 캐싱된 데이터 바로 불러오기
             row_p_norm = rd.get('_p_norm', '')
             p_sim = ls.get_sim(p_norm, row_p_norm)
             
@@ -169,8 +173,10 @@ class BrandMatchingSystem:
         if best_m and best_s >= 60:
             return best_m.get('공급가', 0), best_m.get('중도매', ''), f"{best_m.get('브랜드', '')} {best_m.get('상품명', '')}", True, best_s, []
 
-        # 🚀 실패 시 추천 탐색도 캐시된 딕셔너리(db_records)를 통째로 넘겨 빛의 속도로 찾습니다.
-        suggs = ls.get_4step_recommendations(p_norm, search_brands, self.db_records, c, s)
+        # 🌟 실패 사유 분석을 위해 원본 데이터(c, s)와 번역된 데이터(up_c_norm, up_s_norm)를 모두 전달!
+        suggs = ls.get_4step_recommendations(
+            p_norm, search_brands, self.db_records, up_c_norm, up_s_norm, c, s
+        )
         return "매칭 실패", "", "", False, best_s, suggs
 
     def process_matching(self, sheet2_df: pd.DataFrame, progress_callback=None) -> Tuple[pd.DataFrame, List[Dict]]:
