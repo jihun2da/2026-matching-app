@@ -92,7 +92,7 @@ if menu == "✅ 발주서 자동 매칭":
         st.download_button("📥 통합 결과 다운로드", data=output.getvalue(), file_name="매칭완료.xlsx", use_container_width=True)
 
 # ==========================================
-# 📚 서브 화면 2: 동의어/키워드 관리 (🌟 엑셀 일괄 업로드 기능 추가)
+# 📚 서브 화면 2: 동의어/키워드 관리
 # ==========================================
 elif menu == "📚 동의어/키워드 관리":
     st.title("📚 스마트 동의어 및 제외 키워드 관리")
@@ -100,7 +100,6 @@ elif menu == "📚 동의어/키워드 관리":
     tab1, tab2 = st.tabs(["📚 동의어 사전 관리", "✂️ 제외 키워드 관리"])
     
     with tab1:
-        # --- 1구역: 직접 등록 ---
         st.subheader("➕ 개별 등록")
         with st.form("synonym_form", clear_on_submit=True):
             col1, col2 = st.columns(2)
@@ -127,14 +126,12 @@ elif menu == "📚 동의어/키워드 관리":
 
         st.markdown("---")
         
-        # --- 2구역: 🌟 엑셀 일괄 등록 (새로운 기능) ---
         st.subheader("📥 엑셀 일괄 등록")
         col_down, col_up = st.columns([1, 2])
         
         with col_down:
-            # 양식 파일 생성
             template_df = pd.DataFrame(columns=["기준단어", "동의어", "브랜드적용(O/X)", "상품명적용(O/X)", "옵션적용(O/X)", "완전일치(O/X)"])
-            template_df.loc[0] = ["티셔츠", "티", "X", "O", "X", "O"] # 예시 데이터
+            template_df.loc[0] = ["티셔츠", "티", "X", "O", "X", "O"] 
             buffer = BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 template_df.to_excel(writer, index=False)
@@ -146,35 +143,43 @@ elif menu == "📚 동의어/키워드 관리":
                 try:
                     df_upload = pd.read_excel(syn_excel)
                     db = SessionLocal()
+                    
+                    # 🌟 핵심 해결책: 현재 DB에 있는 동의어와 이번 엑셀에서 추가할 동의어를 한 번에 추적하는 방어막(Set) 생성
+                    existing_syns = {s.synonym_word for s in db.query(Synonym).all()}
                     count = 0
+                    
                     for _, row in df_upload.iterrows():
-                        s_word = str(row['기준단어']).strip()
-                        y_word = str(row['동의어']).strip()
+                        s_word = str(row.get('기준단어', '')).strip()
+                        y_word = str(row.get('동의어', '')).strip()
+                        
                         if not s_word or not y_word or s_word == 'nan' or y_word == 'nan': continue
                         
-                        # 이미 존재하는 동의어는 건너뛰기
-                        if db.query(Synonym).filter(Synonym.synonym_word == y_word).first(): continue
+                        # 중복 방어벽 작동: DB에 있거나, 이번 엑셀 위쪽 줄에서 이미 넣은 단어라면 패스!
+                        if y_word in existing_syns: 
+                            continue
                         
                         db.add(Synonym(
                             standard_word=s_word,
                             synonym_word=y_word,
-                            apply_brand=True if str(row['브랜드적용(O/X)']).upper() == 'O' else False,
-                            apply_product=True if str(row['상품명적용(O/X)']).upper() == 'O' else False,
-                            apply_option=True if str(row['옵션적용(O/X)']).upper() == 'O' else False,
-                            is_exact_match=True if str(row['완전일치(O/X)']).upper() == 'O' else False
+                            apply_brand=True if str(row.get('브랜드적용(O/X)', '')).upper() == 'O' else False,
+                            apply_product=True if str(row.get('상품명적용(O/X)', '')).upper() == 'O' else False,
+                            apply_option=True if str(row.get('옵션적용(O/X)', '')).upper() == 'O' else False,
+                            is_exact_match=True if str(row.get('완전일치(O/X)', '')).upper() == 'O' else False
                         ))
+                        # 등록한 단어를 방어막에 추가하여, 아래 줄에 똑같은 단어가 또 나오면 튕겨냄
+                        existing_syns.add(y_word)
                         count += 1
+                        
                     db.commit()
                     db.close()
-                    st.success(f"✅ {count}건의 동의어가 성공적으로 등록되었습니다!")
+                    st.success(f"✅ 중복/에러 없이 총 {count}건의 동의어가 성공적으로 일괄 등록되었습니다!")
                     st.cache_resource.clear()
                     st.rerun()
                 except Exception as e:
-                    st.error(f"❌ 파일 형식이 잘못되었습니다: {e}")
+                    st.error(f"❌ 오류가 발생했습니다: {e}")
 
         st.markdown("---")
         
-        # --- 3구역: 목록 보기 및 삭제 ---
         st.subheader("🗒️ 등록된 동의어 목록")
         db = SessionLocal()
         syns = db.query(Synonym).filter(Synonym.is_active == True).all()
