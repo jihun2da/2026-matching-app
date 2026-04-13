@@ -16,11 +16,12 @@ if 'match_state' not in st.session_state:
 with st.sidebar:
     st.title("⚙️ 시스템 설정")
     
-    st.markdown("### ⚖️ 매칭 가중치 조절")
+    st.markdown("### ⚖️ 매칭 가중치 및 커트라인 조절")
+    p_threshold = st.slider("상품명 유사도 통과 커트라인 (%)", 50, 100, 80, 5, help="이 점수 이상이어야 매칭을 시도합니다 (기본 80%)")
     p_w = st.slider("상품명 유사도 가중치", 0.1, 1.0, 0.5, 0.1, help="상품명이 비슷할 때 주는 기본 점수 비율")
     o_w = st.slider("옵션 일치 보너스", 0, 100, 50, 5, help="색상/사이즈가 모두 일치하면 주는 가산점")
     b_w = st.slider("브랜드 일치 보너스", 0, 50, 20, 5, help="브랜드가 정확히 일치할 때 주는 가산점")
-    weights = {'p_w': p_w, 'o_w': o_w, 'b_w': b_w}
+    weights = {'p_w': p_w, 'o_w': o_w, 'b_w': b_w, 'p_threshold': p_threshold}
     
     st.markdown("---")
     menu = st.radio("작업 메뉴를 선택하세요", ["✅ 발주서 자동 매칭", "📚 동의어/키워드 관리", "📊 DB 연동 상태"])
@@ -47,7 +48,13 @@ if menu == "✅ 발주서 자동 매칭":
             try:
                 dfs = []
                 for file in uploaded_files:
-                    df = pd.read_csv(file) if file.name.endswith('.csv') else pd.read_excel(file) 
+                    # 🌟 CSV 인코딩 한글 깨짐 및 에러 방어 로직 추가
+                    if file.name.endswith('.csv'):
+                        try: df = pd.read_csv(file, encoding='utf-8')
+                        except UnicodeDecodeError: df = pd.read_csv(file, encoding='cp949')
+                    else:
+                        df = pd.read_excel(file)
+                        
                     df = df.dropna(how='all') 
                     if not df.empty: dfs.append(engine.convert_sheet1_to_sheet2(df))
                 
@@ -66,7 +73,6 @@ if menu == "✅ 발주서 자동 매칭":
                     status_text.markdown(f"**진행률:** {int((current/total)*100)}% ({current}건 / {total}건 처리 중)")
                 
                 with st.spinner(f"🤖 매칭 엔진 가동 중..."):
-                    # 🌟 엔진에서 성공 내역까지 함께 받아옴
                     final_df, success_products, failed_products = engine.process_matching(combined_sheet2_df, weights, progress_callback=update_progress)
                 
                 st.session_state.match_state.update({
@@ -96,18 +102,15 @@ if menu == "✅ 발주서 자동 매칭":
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             s['final_df'].to_excel(writer, index=False, sheet_name='통합_전체_매칭결과')
-            
-            # 🌟 성공건 매칭 상세 시트 추가
             if s['success_products']: 
                 pd.DataFrame(s['success_products']).to_excel(writer, index=False, sheet_name='성공건_매칭상세')
-                
             if s['failed_products']: 
                 pd.DataFrame(s['failed_products']).to_excel(writer, index=False, sheet_name='실패건_유사상품추천')
                 
         st.download_button("📥 통합 결과 다운로드 (상세포함)", data=output.getvalue(), file_name="매칭완료_상세리포트.xlsx", use_container_width=True)
 
 # ==========================================
-# 📚 서브 화면 2: 동의어/키워드 관리 
+# 📚 서브 화면 2: 동의어/키워드 관리
 # ==========================================
 elif menu == "📚 동의어/키워드 관리":
     st.title("📚 스마트 동의어 및 제외 키워드 관리")
