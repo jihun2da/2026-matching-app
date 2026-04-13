@@ -137,7 +137,6 @@ class BrandMatchingSystem:
 
         return pd.DataFrame(sheet2_rows, columns=sheet2_columns)
 
-    # 🌟 가중치 파라미터 적용 (p_w, o_w, b_w)
     def match_row(self, b: str, p: str, s: str, c: str, p_w: float, o_w: float, b_w: float) -> Tuple:
         if not p: return "매칭 실패", "", "", False, 0.0, []
         
@@ -166,21 +165,23 @@ class BrandMatchingSystem:
                 s_ok = lo.check_option_inclusion(up_s_norm, db_sizes)
                 
                 if c_ok and s_ok:
-                    # 🌟 커스텀 가중치 계산식
                     score = (p_sim * p_w) + o_w + b_w
                     if score > best_s: 
                         best_s, best_m = score, rd
 
+        # 🌟 성공 시 매칭된 DB 원본 데이터(best_m)를 그대로 반환하여 비교표를 만들 수 있게 함
         if best_m and best_s >= 60:
-            return best_m.get('공급가', 0), best_m.get('중도매', ''), f"{best_m.get('브랜드', '')} {best_m.get('상품명', '')}", True, best_s, []
+            return best_m.get('공급가', 0), best_m.get('중도매', ''), best_m, True, best_s, []
 
         suggs = ls.get_4step_recommendations(
             p_norm, search_brands, self.db_records, up_c_norm, up_s_norm, c, s
         )
         return "매칭 실패", "", "", False, best_s, suggs
 
-    def process_matching(self, sheet2_df: pd.DataFrame, weights: dict, progress_callback=None) -> Tuple[pd.DataFrame, List[Dict]]:
+    # 🌟 반환 타입에 성공 리스트(success_products) 추가
+    def process_matching(self, sheet2_df: pd.DataFrame, weights: dict, progress_callback=None) -> Tuple[pd.DataFrame, List[Dict], List[Dict]]:
         total_rows = len(sheet2_df)
+        success_products = []  # 🌟 성공 상세 기록용 리스트
         failed_products = []
         results_n, results_o, results_w, results_status = [], [], [], []
         
@@ -193,8 +194,7 @@ class BrandMatchingSystem:
             c = str(row.get('J열(색상)', '')).strip()
             qty = row.get('L열(수량)', 1)
 
-            # 🌟 가중치 전달하여 매칭 실행
-            price, wh, full_name, ok, score, suggs = self.match_row(b, p, s, c, weights['p_w'], weights['o_w'], weights['b_w'])
+            price, wh, match_info, ok, score, suggs = self.match_row(b, p, s, c, weights['p_w'], weights['o_w'], weights['b_w'])
 
             if ok and price != "매칭 실패":
                 results_n.append(wh)
@@ -202,6 +202,18 @@ class BrandMatchingSystem:
                 results_status.append("정확매칭" if score >= 90 else "유사매칭")
                 try: results_w.append(float(price) * int(qty))
                 except: results_w.append(0)
+                
+                # 🌟 매칭 성공 시 발주 데이터와 DB 데이터를 나란히 기록
+                success_products.append({
+                    '[발주] 브랜드': b,
+                    '[발주] 상품명': p,
+                    '[발주] 옵션': f"{c} / {s}",
+                    '▶ 매칭상태': "정확매칭" if score >= 90 else "유사매칭",
+                    '▶ 매칭점수': f"{score:.1f}점",
+                    '[DB] 브랜드': match_info.get('브랜드', ''),
+                    '[DB] 상품명': match_info.get('상품명', ''),
+                    '[DB] 옵션입력': match_info.get('옵션입력', '')
+                })
             else:
                 results_n.append("")
                 results_o.append(0)
@@ -221,4 +233,4 @@ class BrandMatchingSystem:
         sheet2_df['W열(금액)'] = results_w
         sheet2_df['매칭_상태'] = results_status
 
-        return sheet2_df, failed_products
+        return sheet2_df, success_products, failed_products
