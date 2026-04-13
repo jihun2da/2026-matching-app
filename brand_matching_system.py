@@ -95,7 +95,6 @@ class BrandMatchingSystem:
                     sheet2_row['I열(상품명)'] = lt.remove_keywords(lt.remove_front_parentheses(parts[1]), self.keyword_list)
                 else:
                     sheet2_row['H열(브랜드)'] = ""
-                    # 🌟 이전에 누락되었던 예외 상황에서의 키워드 제거 로직 추가
                     sheet2_row['I열(상품명)'] = lt.remove_keywords(lt.remove_front_parentheses(raw_full), self.keyword_list)
             
             if len(sheet1_df.columns) >= 6:
@@ -152,8 +151,11 @@ class BrandMatchingSystem:
         if best_m and best_s >= 60:
             return best_m.get('공급가', 0), best_m.get('중도매', ''), f"{best_m.get('브랜드', '')} {best_m.get('상품명', '')}", True, best_s, []
 
-        full_q = "".join(f"{b}{p}".lower().split())
-        suggs = ls.get_4step_recommendations(p_norm, search_brands, self.product_index, self.brand_data, full_q, c, s)
+        # 🌟 변경된 추천 엔진 호출 방식 (동의어, 제외키워드까지 전달하여 정밀도 향상)
+        suggs = ls.get_4step_recommendations(
+            p_norm, search_brands, self.brand_data, c, s, 
+            self.keyword_list, self.synonym_rules
+        )
         return "매칭 실패", "", "", False, best_s, suggs
 
     def process_matching(self, sheet2_df: pd.DataFrame, progress_callback=None) -> Tuple[pd.DataFrame, List[Dict]]:
