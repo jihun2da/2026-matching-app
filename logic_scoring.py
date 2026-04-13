@@ -2,7 +2,6 @@
 from difflib import SequenceMatcher
 import re
 import logic_option as lo
-import logic_text as lt
 
 def get_sim(a, b):
     if not a or not b: return 0.0
@@ -10,23 +9,27 @@ def get_sim(a, b):
     b = re.sub(r'\s+', '', str(b).lower())
     return SequenceMatcher(None, a, b).ratio() * 100
 
-def get_4step_recommendations(target_prod_norm, search_brands, brand_data, up_c, up_s, keyword_list, synonym_rules):
+def get_4step_recommendations(target_prod_norm, search_brands, db_records, up_c, up_s):
+    """
+    db_records: Pandas DataFrame이 아닌, 미리 정규화된 데이터가 포함된 딕셔너리 리스트 
+    (매번 DataFrame을 변환하는 엄청난 병목을 제거했습니다)
+    """
     suggestions = []
     temp_list = []
 
-    for rd in brand_data.to_dict('records'):
+    for rd in db_records:
         db_b = re.sub(r'\s+', '', str(rd.get('브랜드','')).lower())
         
-        # 🌟 핵심 수정 1: DB 상품명도 키워드와 괄호를 완벽히 벗겨서 순수한 상태로 정규화!
-        raw_db_p = rd.get('상품명', '')
-        db_p_norm = lt.normalize_name(raw_db_p, keyword_list, synonym_rules, 'product')
+        # 🌟 매번 정규화하지 않고, 메모리에 저장된 정제 상품명과 옵션 리스트를 즉시 꺼내 씁니다.
+        db_p_norm = rd.get('_p_norm', '') 
+        db_colors = rd.get('_db_colors', [])
+        db_sizes = rd.get('_db_sizes', [])
         
         b_match = any(re.sub(r'\s+', '', str(b)) in db_b for b in search_brands)
         p_sim = get_sim(target_prod_norm, db_p_norm)
         
         if b_match or p_sim > 50:
             reason = []
-            db_colors, db_sizes = lo.get_db_option_list(rd.get('옵션입력', ''))
             
             if p_sim < 80: 
                 reason.append(f"상품명 유사도 낮음({p_sim:.0f}%)")
@@ -39,7 +42,6 @@ def get_4step_recommendations(target_prod_norm, search_brands, brand_data, up_c,
             
             fail_msg = " / ".join(reason) if reason else "옵션 규격 불일치"
             
-            # 🌟 핵심 수정 2: 브랜드가 일치하면 추천 정렬 점수에 강력한 가중치(+50) 부여!
             sort_score = p_sim + (50.0 if b_match else 0.0)
             
             temp_list.append({
@@ -48,7 +50,6 @@ def get_4step_recommendations(target_prod_norm, search_brands, brand_data, up_c,
                 'reason': fail_msg
             })
 
-    # 가중치가 반영된 최종 점수로 정렬
     temp_list.sort(key=lambda x: x['sort_score'], reverse=True)
     
     for item in temp_list[:4]:
