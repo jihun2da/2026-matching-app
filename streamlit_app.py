@@ -92,77 +92,106 @@ if menu == "✅ 발주서 자동 매칭":
         st.download_button("📥 통합 결과 다운로드", data=output.getvalue(), file_name="매칭완료.xlsx", use_container_width=True)
 
 # ==========================================
-# 📚 서브 화면 2: 동의어/키워드 관리 (🌟 누락되었던 목록 보기 완벽 복구!)
+# 📚 서브 화면 2: 동의어/키워드 관리 (🌟 엑셀 일괄 업로드 기능 추가)
 # ==========================================
 elif menu == "📚 동의어/키워드 관리":
     st.title("📚 스마트 동의어 및 제외 키워드 관리")
-    if st.button("🔄 매칭 엔진 기억 새로고침"):
-        st.cache_resource.clear()
-        st.success("업데이트 완료!")
-        st.rerun()
-
-    tab1, tab2 = st.tabs(["📚 동의어 사전 추가/삭제", "✂️ 제외 키워드 추가/삭제"])
+    
+    tab1, tab2 = st.tabs(["📚 동의어 사전 관리", "✂️ 제외 키워드 관리"])
     
     with tab1:
+        # --- 1구역: 직접 등록 ---
+        st.subheader("➕ 개별 등록")
         with st.form("synonym_form", clear_on_submit=True):
             col1, col2 = st.columns(2)
             with col1: std_word = st.text_input("기준 단어 (정답)")
             with col2: syn_word = st.text_input("동의어 (오타)")
-            
-            st.markdown("📍 **어디에 적용하시겠습니까?**")
-            c1, c2, c3 = st.columns(3)
-            with c1: apply_brand = st.checkbox("☑️ 브랜드", value=True)
-            with c2: apply_product = st.checkbox("☑️ 상품명", value=True)
-            with c3: apply_option = st.checkbox("☑️ 옵션 (색상/사이즈)", value=False)
-            
-            match_type = st.radio("⚙️ 치환 강도 조절", ["🟢 부분 포함", "🔴 완전 일치"])
-            is_exact = True if "완전 일치" in match_type else False
-
+            st.markdown("📍 **적용 범위 및 강도**")
+            c1, c2, c3, c4 = st.columns(4)
+            b_app = c1.checkbox("브랜드", value=True)
+            p_app = c2.checkbox("상품명", value=True)
+            o_app = c3.checkbox("옵션", value=False)
+            is_ex = c4.checkbox("완전일치", value=True)
             if st.form_submit_button("등록하기") and std_word and syn_word:
-                if not (apply_brand or apply_product or apply_option): 
-                    st.error("범위를 선택하세요!")
-                else:
-                    db = SessionLocal()
-                    try:
-                        if db.query(Synonym).filter(Synonym.synonym_word == syn_word.strip()).first():
-                            st.warning("🚨 이미 등록된 동의어입니다.")
-                        else:
-                            db.add(Synonym(standard_word=std_word.strip(), synonym_word=syn_word.strip(), apply_brand=apply_brand, apply_product=apply_product, apply_option=apply_option, is_exact_match=is_exact))
-                            db.commit()
-                            st.success("✅ 등록되었습니다!")
-                            st.cache_resource.clear()
-                            st.rerun()
-                    finally: db.close()
+                db = SessionLocal()
+                try:
+                    if db.query(Synonym).filter(Synonym.synonym_word == syn_word.strip()).first():
+                        st.warning("🚨 이미 등록된 동의어입니다.")
+                    else:
+                        db.add(Synonym(standard_word=std_word.strip(), synonym_word=syn_word.strip(), apply_brand=b_app, apply_product=p_app, apply_option=o_app, is_exact_match=is_ex))
+                        db.commit()
+                        st.success("✅ 등록되었습니다!")
+                        st.cache_resource.clear()
+                        st.rerun()
+                finally: db.close()
 
-        # 🌟 삭제되었던 동의어 목록 출력 및 삭제 코드 복구
         st.markdown("---")
+        
+        # --- 2구역: 🌟 엑셀 일괄 등록 (새로운 기능) ---
+        st.subheader("📥 엑셀 일괄 등록")
+        col_down, col_up = st.columns([1, 2])
+        
+        with col_down:
+            # 양식 파일 생성
+            template_df = pd.DataFrame(columns=["기준단어", "동의어", "브랜드적용(O/X)", "상품명적용(O/X)", "옵션적용(O/X)", "완전일치(O/X)"])
+            template_df.loc[0] = ["티셔츠", "티", "X", "O", "X", "O"] # 예시 데이터
+            buffer = BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                template_df.to_excel(writer, index=False)
+            st.download_button("📄 업로드 양식 다운로드", data=buffer.getvalue(), file_name="동의어_일괄등록_양식.xlsx", use_container_width=True)
+        
+        with col_up:
+            syn_excel = st.file_uploader("동의어 엑셀 파일을 업로드하세요", type=['xlsx'])
+            if syn_excel and st.button("🚀 엑셀 데이터 일괄 저장", use_container_width=True):
+                try:
+                    df_upload = pd.read_excel(syn_excel)
+                    db = SessionLocal()
+                    count = 0
+                    for _, row in df_upload.iterrows():
+                        s_word = str(row['기준단어']).strip()
+                        y_word = str(row['동의어']).strip()
+                        if not s_word or not y_word or s_word == 'nan' or y_word == 'nan': continue
+                        
+                        # 이미 존재하는 동의어는 건너뛰기
+                        if db.query(Synonym).filter(Synonym.synonym_word == y_word).first(): continue
+                        
+                        db.add(Synonym(
+                            standard_word=s_word,
+                            synonym_word=y_word,
+                            apply_brand=True if str(row['브랜드적용(O/X)']).upper() == 'O' else False,
+                            apply_product=True if str(row['상품명적용(O/X)']).upper() == 'O' else False,
+                            apply_option=True if str(row['옵션적용(O/X)']).upper() == 'O' else False,
+                            is_exact_match=True if str(row['완전일치(O/X)']).upper() == 'O' else False
+                        ))
+                        count += 1
+                    db.commit()
+                    db.close()
+                    st.success(f"✅ {count}건의 동의어가 성공적으로 등록되었습니다!")
+                    st.cache_resource.clear()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ 파일 형식이 잘못되었습니다: {e}")
+
+        st.markdown("---")
+        
+        # --- 3구역: 목록 보기 및 삭제 ---
+        st.subheader("🗒️ 등록된 동의어 목록")
         db = SessionLocal()
         syns = db.query(Synonym).filter(Synonym.is_active == True).all()
         if syns:
-            def get_scope_str(s):
-                res = []
-                if s.apply_brand: res.append("브랜드")
-                if s.apply_product: res.append("상품명")
-                if s.apply_option: res.append("옵션")
-                return ", ".join(res)
-
             df_syns = pd.DataFrame([{
                 "선택": False, "정답": s.standard_word, "오타": s.synonym_word,
-                "적용범위": get_scope_str(s), "강도": "완전일치" if s.is_exact_match else "부분포함"
+                "브랜드": "O" if s.apply_brand else "X", "상품명": "O" if s.apply_product else "X",
+                "옵션": "O" if s.apply_option else "X", "완전일치": "O" if s.is_exact_match else "X"
             } for s in syns])
-            edited_df = st.data_editor(df_syns, column_config={"선택": st.column_config.CheckboxColumn("삭제 선택", default=False)}, hide_index=True, use_container_width=True)
+            edited_df = st.data_editor(df_syns, column_config={"선택": st.column_config.CheckboxColumn("삭제", default=False)}, hide_index=True, use_container_width=True)
             selected = edited_df[edited_df["선택"] == True]
             if not selected.empty:
-                target = selected.iloc[0]["오타"]
-                if st.button("🗑️ 선택 항목 삭제하기"):
-                    try:
-                        to_del = db.query(Synonym).filter(Synonym.synonym_word == target).first()
-                        if to_del: 
-                            db.delete(to_del)
-                            db.commit()
-                            st.cache_resource.clear()
-                            st.rerun()
-                    finally: pass
+                if st.button("🗑️ 선택된 동의어 삭제하기"):
+                    for target_syn in selected["오타"]:
+                        to_del = db.query(Synonym).filter(Synonym.synonym_word == target_syn).first()
+                        if to_del: db.delete(to_del)
+                    db.commit(); st.cache_resource.clear(); st.rerun()
         db.close()
 
     with tab2:
@@ -172,14 +201,10 @@ elif menu == "📚 동의어/키워드 관리":
                 db = SessionLocal()
                 try:
                     if not db.query(Keyword).filter(Keyword.keyword_text == new_keyword.strip()).first():
-                        db.add(Keyword(keyword_text=new_keyword.strip()))
-                        db.commit()
-                        st.success("✅ 등록!")
-                        st.cache_resource.clear()
-                        st.rerun()
+                        db.add(Keyword(keyword_text=new_keyword.strip())); db.commit()
+                        st.success("✅ 등록!"); st.cache_resource.clear(); st.rerun()
                 finally: db.close()
 
-        # 🌟 삭제되었던 제외 키워드 목록 출력 및 삭제 코드 복구
         db = SessionLocal()
         kws = db.query(Keyword).all()
         if kws:
@@ -187,14 +212,11 @@ elif menu == "📚 동의어/키워드 관리":
             edited_kw = st.data_editor(df_kws, column_config={"선택": st.column_config.CheckboxColumn("삭제", default=False)}, hide_index=True, use_container_width=True)
             sel_kw = edited_kw[edited_kw["선택"] == True]
             if not sel_kw.empty:
-                t_kw = sel_kw.iloc[0]["키워드"]
-                if st.button("🗑️ 삭제"):
-                    to_del = db.query(Keyword).filter(Keyword.keyword_text == t_kw).first()
-                    if to_del: 
-                        db.delete(to_del)
-                        db.commit()
-                        st.cache_resource.clear()
-                        st.rerun()
+                if st.button("🗑️ 선택된 키워드 삭제"):
+                    for t_kw in sel_kw["키워드"]:
+                        to_del = db.query(Keyword).filter(Keyword.keyword_text == t_kw).first()
+                        if to_del: db.delete(to_del)
+                    db.commit(); st.cache_resource.clear(); st.rerun()
         db.close()
 
 # ==========================================
@@ -202,43 +224,25 @@ elif menu == "📚 동의어/키워드 관리":
 # ==========================================
 elif menu == "📊 DB 연동 상태":
     st.title("📊 마스터 DB 연동 및 검색 관리")
-    
     if engine.brand_data is not None and not engine.brand_data.empty: 
-        st.success(f"🟢 AWS DB 연결 완료 (총 {len(engine.brand_data):,}건의 마스터 데이터가 존재합니다)")
-    else:
-        st.error("🔴 DB에 데이터가 없습니다.")
+        st.success(f"🟢 AWS DB 연결 완료 (총 {len(engine.brand_data):,}건 데이터)")
     
-    st.markdown("---")
-    
-    st.subheader("🔍 마스터 DB 검색")
     with st.form("search_form"):
-        search_query = st.text_input("찾으시는 브랜드명이나 상품명을 입력하세요", placeholder="검색어 입력 후 Enter 또는 검색 버튼 클릭")
+        search_query = st.text_input("🔍 브랜드 또는 상품명 검색", placeholder="검색어 입력 후 Enter")
         search_submit = st.form_submit_button("검색 실행")
     
     if (search_submit or search_query) and engine.brand_data is not None:
         df_display = engine.brand_data.copy()
-        if search_query:
-            mask = df_display['브랜드'].str.contains(search_query, case=False, na=False) | \
-                   df_display['상품명'].str.contains(search_query, case=False, na=False)
-            df_display = df_display[mask]
-            
-        st.write(f"**검색 결과:** 총 {len(df_display):,}건")
-        st.dataframe(df_display, use_container_width=True)
+        mask = df_display['브랜드'].str.contains(search_query, case=False, na=False) | df_display['상품명'].str.contains(search_query, case=False, na=False)
+        st.write(f"**검색 결과:** {len(df_display[mask])}건"); st.dataframe(df_display[mask], use_container_width=True)
 
-    st.markdown("---")
-    st.subheader("📥 신규 마스터 DB 업로드")
-    db_upload_file = st.file_uploader("마스터 DB 엑셀 파일 업로드", type=['xlsx', 'xls', 'csv'])
-    if db_upload_file and st.button("🚀 DB에 추가", use_container_width=True):
-        with st.spinner("AWS DB에 저장 중입니다..."):
+    with st.expander("📥 신규 마스터 DB 업로드"):
+        db_upload_file = st.file_uploader("마스터 DB 엑셀 파일 업로드", type=['xlsx'])
+        if db_upload_file and st.button("🚀 DB에 추가"):
             try:
-                new_db = pd.read_csv(db_upload_file) if db_upload_file.name.endswith('.csv') else pd.read_excel(db_upload_file)
+                new_db = pd.read_excel(db_upload_file)
                 db = SessionLocal()
                 for _, r in new_db.iterrows():
-                    b_val = str(r.get('브랜드', '')).strip()
-                    if b_val and b_val != 'nan':
-                        db.add(MasterProduct(brand=b_val, product_name=str(r.get('상품명', '')).strip(), options=str(r.get('옵션입력', '')).strip(), wholesale_name=str(r.get('중도매', '')).strip(), supply_price=str(r.get('공급가', '0')).strip()))
-                db.commit()
-                st.success("✅ 성공적으로 추가되었습니다!")
-                st.cache_resource.clear()
-                st.rerun()
-            finally: db.close()
+                    db.add(MasterProduct(brand=str(r.get('브랜드','')).strip(), product_name=str(r.get('상품명','')).strip(), options=str(r.get('옵션입력','')).strip(), wholesale_name=str(r.get('중도매','')).strip(), supply_price=str(r.get('공급가','0')).strip()))
+                db.commit(); db.close(); st.success("✅ 완료!"); st.cache_resource.clear(); st.rerun()
+            except Exception as e: st.error(f"오류: {e}")
