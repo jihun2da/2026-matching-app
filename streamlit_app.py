@@ -9,7 +9,7 @@ st.set_page_config(page_title="2026 브랜드 매칭 시스템", layout="wide", 
 
 if 'match_state' not in st.session_state:
     st.session_state.match_state = {
-        'completed': False, 'final_df': None, 'failed_products': [],
+        'completed': False, 'final_df': None, 'success_products': [], 'failed_products': [],
         'total_count': 0, 'success_count': 0, 'fail_count': 0
     }
 
@@ -66,15 +66,16 @@ if menu == "✅ 발주서 자동 매칭":
                     status_text.markdown(f"**진행률:** {int((current/total)*100)}% ({current}건 / {total}건 처리 중)")
                 
                 with st.spinner(f"🤖 매칭 엔진 가동 중..."):
-                    # 🌟 가중치 파라미터 전달하여 매칭 실행
-                    final_df, failed_products = engine.process_matching(combined_sheet2_df, weights, progress_callback=update_progress)
+                    # 🌟 엔진에서 성공 내역까지 함께 받아옴
+                    final_df, success_products, failed_products = engine.process_matching(combined_sheet2_df, weights, progress_callback=update_progress)
                 
                 st.session_state.match_state.update({
                     'final_df': final_df,
+                    'success_products': success_products,
                     'failed_products': failed_products,
                     'completed': True,
                     'total_count': total_input_rows,
-                    'success_count': total_input_rows - len(failed_products),
+                    'success_count': len(success_products),
                     'fail_count': len(failed_products)
                 })
                 st.rerun()
@@ -95,12 +96,18 @@ if menu == "✅ 발주서 자동 매칭":
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             s['final_df'].to_excel(writer, index=False, sheet_name='통합_전체_매칭결과')
+            
+            # 🌟 성공건 매칭 상세 시트 추가
+            if s['success_products']: 
+                pd.DataFrame(s['success_products']).to_excel(writer, index=False, sheet_name='성공건_매칭상세')
+                
             if s['failed_products']: 
                 pd.DataFrame(s['failed_products']).to_excel(writer, index=False, sheet_name='실패건_유사상품추천')
-        st.download_button("📥 통합 결과 다운로드", data=output.getvalue(), file_name="매칭완료.xlsx", use_container_width=True)
+                
+        st.download_button("📥 통합 결과 다운로드 (상세포함)", data=output.getvalue(), file_name="매칭완료_상세리포트.xlsx", use_container_width=True)
 
 # ==========================================
-# 📚 서브 화면 2: 동의어/키워드 관리 (🌟 증발했던 전체 코드 복구 완료)
+# 📚 서브 화면 2: 동의어/키워드 관리 
 # ==========================================
 elif menu == "📚 동의어/키워드 관리":
     st.title("📚 스마트 동의어 및 제외 키워드 관리")
@@ -228,7 +235,7 @@ elif menu == "📚 동의어/키워드 관리":
         db.close()
 
 # ==========================================
-# 📊 서브 화면 3: DB 상태 (🌟 증발했던 전체 코드 복구 완료)
+# 📊 서브 화면 3: DB 상태
 # ==========================================
 elif menu == "📊 DB 연동 상태":
     st.title("📊 마스터 DB 연동 및 검색 관리")
