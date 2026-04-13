@@ -144,7 +144,6 @@ elif menu == "📚 동의어/키워드 관리":
                     df_upload = pd.read_excel(syn_excel)
                     db = SessionLocal()
                     
-                    # 🌟 핵심 해결책: 현재 DB에 있는 동의어와 이번 엑셀에서 추가할 동의어를 한 번에 추적하는 방어막(Set) 생성
                     existing_syns = {s.synonym_word for s in db.query(Synonym).all()}
                     count = 0
                     
@@ -153,10 +152,7 @@ elif menu == "📚 동의어/키워드 관리":
                         y_word = str(row.get('동의어', '')).strip()
                         
                         if not s_word or not y_word or s_word == 'nan' or y_word == 'nan': continue
-                        
-                        # 중복 방어벽 작동: DB에 있거나, 이번 엑셀 위쪽 줄에서 이미 넣은 단어라면 패스!
-                        if y_word in existing_syns: 
-                            continue
+                        if y_word in existing_syns: continue
                         
                         db.add(Synonym(
                             standard_word=s_word,
@@ -166,7 +162,6 @@ elif menu == "📚 동의어/키워드 관리":
                             apply_option=True if str(row.get('옵션적용(O/X)', '')).upper() == 'O' else False,
                             is_exact_match=True if str(row.get('완전일치(O/X)', '')).upper() == 'O' else False
                         ))
-                        # 등록한 단어를 방어막에 추가하여, 아래 줄에 똑같은 단어가 또 나오면 튕겨냄
                         existing_syns.add(y_word)
                         count += 1
                         
@@ -247,7 +242,29 @@ elif menu == "📊 DB 연동 상태":
             try:
                 new_db = pd.read_excel(db_upload_file)
                 db = SessionLocal()
+                count = 0
                 for _, r in new_db.iterrows():
-                    db.add(MasterProduct(brand=str(r.get('브랜드','')).strip(), product_name=str(r.get('상품명','')).strip(), options=str(r.get('옵션입력','')).strip(), wholesale_name=str(r.get('중도매','')).strip(), supply_price=str(r.get('공급가','0')).strip()))
-                db.commit(); db.close(); st.success("✅ 완료!"); st.cache_resource.clear(); st.rerun()
-            except Exception as e: st.error(f"오류: {e}")
+                    b_val = str(r.get('브랜드','')).strip()
+                    if b_val and b_val != 'nan':
+                        # 🌟 핵심 해결: 콤마 등 불순물 제거 후 완벽한 숫자로 변환
+                        raw_price = str(r.get('공급가', '0')).replace(',', '').strip()
+                        try:
+                            p_val = float(raw_price)
+                        except ValueError:
+                            p_val = 0.0
+                            
+                        db.add(MasterProduct(
+                            brand=b_val, 
+                            product_name=str(r.get('상품명','')).strip(), 
+                            options=str(r.get('옵션입력','')).strip(), 
+                            wholesale_name=str(r.get('중도매','')).strip(), 
+                            supply_price=p_val # 문자가 아닌 숫자로 안전하게 밀어넣음
+                        ))
+                        count += 1
+                db.commit()
+                db.close()
+                st.success(f"✅ 총 {count}건의 마스터 DB가 성공적으로 업로드되었습니다!")
+                st.cache_resource.clear()
+                st.rerun()
+            except Exception as e: 
+                st.error(f"오류: {e}")
