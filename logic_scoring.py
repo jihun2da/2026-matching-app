@@ -9,7 +9,7 @@ def get_sim(a, b):
     b = re.sub(r'\s+', '', str(b).lower())
     return SequenceMatcher(None, a, b).ratio() * 100
 
-def get_4step_recommendations(target_prod_norm, search_brands, db_records, up_c_norm, up_s_norm, raw_c, raw_s):
+def get_4step_recommendations(target_prod_norm, search_brands, db_records, up_c_norm, up_s_norm, raw_c, raw_s, p_threshold=80):
     suggestions = []
     temp_list = []
 
@@ -23,11 +23,10 @@ def get_4step_recommendations(target_prod_norm, search_brands, db_records, up_c_
         if b_match or p_sim > 50:
             reason = []
             
-            # 🌟 통과 검사는 동의어가 적용된 리스트(_db_colors)로 하고, 화면 출력은 원본(_db_colors_raw)으로 합니다.
             db_colors = rd.get('_db_colors', [])
             db_sizes = rd.get('_db_sizes', [])
             
-            if p_sim < 80: 
+            if p_sim < p_threshold: 
                 reason.append(f"상품명 유사도 낮음({p_sim:.0f}%)")
             
             if up_c_norm and not lo.check_option_inclusion(up_c_norm, db_colors):
@@ -38,7 +37,7 @@ def get_4step_recommendations(target_prod_norm, search_brands, db_records, up_c_
                 raw_db_sizes = rd.get('_db_sizes_raw', [])
                 reason.append(f"사이즈 불포함(발주:{raw_s}/DB:{'|'.join(raw_db_sizes)})")
             
-            fail_msg = " / ".join(reason) if reason else "옵션 규격 불일치"
+            fail_msg = " / ".join(reason) if reason else "브랜드 파싱 누락 또는 총점 미달"
             
             sort_score = p_sim + (50.0 if b_match else 0.0)
             
@@ -51,8 +50,11 @@ def get_4step_recommendations(target_prod_norm, search_brands, db_records, up_c_
     temp_list.sort(key=lambda x: x['sort_score'], reverse=True)
     
     for item in temp_list[:4]:
-        try: price = f"{int(item['rd'].get('공급가',0)):,}원"
-        except: price = f"{item['rd'].get('공급가',0)}원"
+        try: 
+            # 🌟 소수점 가격 크래시 방어 (7000.0 -> 7,000)
+            price = f"{int(float(item['rd'].get('공급가',0))):,}원"
+        except: 
+            price = f"{item['rd'].get('공급가',0)}원"
         suggestions.append(f"[{item['rd'].get('브랜드','')}] {item['rd'].get('상품명','')} | {price} (사유: {item['reason']})")
             
     return suggestions
