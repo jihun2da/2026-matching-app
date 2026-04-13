@@ -10,6 +10,7 @@ from database import SessionLocal, MasterProduct, Synonym, Keyword
 class BrandMatchingSystem:
     def __init__(self):
         self.brand_data = None
+        self.db_records = [] # 🌟 속도 향상을 위한 캐시 리스트
         self.synonym_rules = [] 
         self.keyword_list = []
         self.brand_index = {}
@@ -36,8 +37,22 @@ class BrandMatchingSystem:
             self.keyword_list = [k.keyword_text for k in db.query(Keyword).all()]
             prods = db.query(MasterProduct).all()
             data = []
+            
+            # 🚀 [대안 1 적용] 여기서 DB 데이터를 꺼낼 때, 무거운 계산을 미리 다 해둡니다!
             for p in prods:
-                row = {'브랜드': p.brand, '상품명': p.product_name, '옵션입력': p.options, '중도매': p.wholesale_name, '공급가': p.supply_price}
+                p_norm = lt.normalize_name(p.product_name, self.keyword_list, self.synonym_rules, 'product')
+                db_c, db_s = lo.get_db_option_list(p.options)
+                
+                row = {
+                    '브랜드': p.brand, 
+                    '상품명': p.product_name, 
+                    '옵션입력': p.options, 
+                    '중도매': p.wholesale_name, 
+                    '공급가': p.supply_price,
+                    '_p_norm': p_norm,     # 🌟 미리 껍데기 벗긴 상품명 저장
+                    '_db_colors': db_c,    # 🌟 미리 쪼갠 색상 리스트 저장
+                    '_db_sizes': db_s      # 🌟 미리 쪼갠 사이즈 리스트 저장
+                }
                 data.append(row)
                 
                 b_norm = lt.apply_smart_synonyms(str(p.brand), self.synonym_rules, 'brand')
@@ -45,10 +60,10 @@ class BrandMatchingSystem:
                 if b_key not in self.brand_index: self.brand_index[b_key] = []
                 self.brand_index[b_key].append(row)
                 
-                p_key = lt.normalize_name(p.product_name, self.keyword_list, self.synonym_rules, 'product')
-                if p_key not in self.product_index: self.product_index[p_key] = []
-                self.product_index[p_key].append(row)
+                if p_norm not in self.product_index: self.product_index[p_norm] = []
+                self.product_index[p_norm].append(row)
                 
+            self.db_records = data # 빠른 반복을 위한 딕셔너리 원본 저장
             self.brand_data = pd.DataFrame(data)
         finally: 
             db.close()
@@ -131,14 +146,17 @@ class BrandMatchingSystem:
         candidates = []
         for sb in search_brands: candidates.extend(self.brand_index.get(sb, []))
         
+        up_c_norm = lt.apply_smart_synonyms(c, self.synonym_rules, 'option')
+        up_s_norm = lt.apply_smart_synonyms(s, self.synonym_rules, 'option')
+        
         for rd in candidates:
-            row_p_norm = lt.normalize_name(rd.get('상품명', ''), self.keyword_list, self.synonym_rules, 'product')
+            # 🚀 무거운 연산 제거: 캐싱된 데이터 바로 불러오기
+            row_p_norm = rd.get('_p_norm', '')
             p_sim = ls.get_sim(p_norm, row_p_norm)
             
             if p_sim >= 80:
-                db_colors, db_sizes = lo.get_db_option_list(rd.get('옵션입력', ''))
-                up_c_norm = lt.apply_smart_synonyms(c, self.synonym_rules, 'option')
-                up_s_norm = lt.apply_smart_synonyms(s, self.synonym_rules, 'option')
+                db_colors = rd.get('_db_colors', [])
+                db_sizes = rd.get('_db_sizes', [])
                 
                 c_ok = lo.check_option_inclusion(up_c_norm, db_colors)
                 s_ok = lo.check_option_inclusion(up_s_norm, db_sizes)
@@ -151,11 +169,8 @@ class BrandMatchingSystem:
         if best_m and best_s >= 60:
             return best_m.get('공급가', 0), best_m.get('중도매', ''), f"{best_m.get('브랜드', '')} {best_m.get('상품명', '')}", True, best_s, []
 
-        # 🌟 변경된 추천 엔진 호출 방식 (동의어, 제외키워드까지 전달하여 정밀도 향상)
-        suggs = ls.get_4step_recommendations(
-            p_norm, search_brands, self.brand_data, c, s, 
-            self.keyword_list, self.synonym_rules
-        )
+        # 🚀 실패 시 추천 탐색도 캐시된 딕셔너리(db_records)를 통째로 넘겨 빛의 속도로 찾습니다.
+        suggs = ls.get_4step_recommendations(p_norm, search_brands, self.db_records, c, s)
         return "매칭 실패", "", "", False, best_s, suggs
 
     def process_matching(self, sheet2_df: pd.DataFrame, progress_callback=None) -> Tuple[pd.DataFrame, List[Dict]]:
