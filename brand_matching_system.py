@@ -137,8 +137,13 @@ class BrandMatchingSystem:
 
         return pd.DataFrame(sheet2_rows, columns=sheet2_columns)
 
-    def match_row(self, b: str, p: str, s: str, c: str, p_w: float, o_w: float, b_w: float) -> Tuple:
+    def match_row(self, b: str, p: str, s: str, c: str, weights: dict) -> Tuple:
         if not p: return "매칭 실패", "", "", False, 0.0, []
+        
+        p_threshold = weights.get('p_threshold', 80)
+        p_w = weights.get('p_w', 0.5)
+        o_w = weights.get('o_w', 50.0)
+        b_w = weights.get('b_w', 20.0)
         
         b_norm = lt.apply_smart_synonyms(b, self.synonym_rules, 'brand')
         b_clean = "".join(re.sub(r'[\[\]\(\)]', '', b_norm).lower().split())
@@ -146,18 +151,22 @@ class BrandMatchingSystem:
         
         search_brands = set([b_clean]) if b_clean else set()
         
-        best_m, best_s = None, 0.0
         candidates = []
         for sb in search_brands: candidates.extend(self.brand_index.get(sb, []))
         
+        if not candidates:
+            candidates = self.db_records
+            
         up_c_norm = lt.apply_smart_synonyms(c, self.synonym_rules, 'option')
         up_s_norm = lt.apply_smart_synonyms(s, self.synonym_rules, 'option')
+        
+        best_m, best_s = None, 0.0
         
         for rd in candidates:
             row_p_norm = rd.get('_p_norm', '')
             p_sim = ls.get_sim(p_norm, row_p_norm)
             
-            if p_sim >= 80:
+            if p_sim >= p_threshold:
                 db_colors = rd.get('_db_colors', [])
                 db_sizes = rd.get('_db_sizes', [])
                 
@@ -165,23 +174,26 @@ class BrandMatchingSystem:
                 s_ok = lo.check_option_inclusion(up_s_norm, db_sizes)
                 
                 if c_ok and s_ok:
-                    score = (p_sim * p_w) + o_w + b_w
+                    db_b_clean = "".join(re.sub(r'[\[\]\(\)]', '', str(rd.get('브랜드', '')).lower()).split())
+                    is_b_match = (b_clean == db_b_clean) if b_clean else False
+                    
+                    actual_b_w = b_w if is_b_match else 0.0
+                    score = (p_sim * p_w) + o_w + actual_b_w
+                    
                     if score > best_s: 
                         best_s, best_m = score, rd
 
-        # 🌟 성공 시 매칭된 DB 원본 데이터(best_m)를 그대로 반환하여 비교표를 만들 수 있게 함
         if best_m and best_s >= 60:
             return best_m.get('공급가', 0), best_m.get('중도매', ''), best_m, True, best_s, []
 
         suggs = ls.get_4step_recommendations(
-            p_norm, search_brands, self.db_records, up_c_norm, up_s_norm, c, s
+            p_norm, search_brands, self.db_records, up_c_norm, up_s_norm, c, s, p_threshold
         )
         return "매칭 실패", "", "", False, best_s, suggs
 
-    # 🌟 반환 타입에 성공 리스트(success_products) 추가
     def process_matching(self, sheet2_df: pd.DataFrame, weights: dict, progress_callback=None) -> Tuple[pd.DataFrame, List[Dict], List[Dict]]:
         total_rows = len(sheet2_df)
-        success_products = []  # 🌟 성공 상세 기록용 리스트
+        success_products = []  
         failed_products = []
         results_n, results_o, results_w, results_status = [], [], [], []
         
@@ -194,7 +206,7 @@ class BrandMatchingSystem:
             c = str(row.get('J열(색상)', '')).strip()
             qty = row.get('L열(수량)', 1)
 
-            price, wh, match_info, ok, score, suggs = self.match_row(b, p, s, c, weights['p_w'], weights['o_w'], weights['b_w'])
+            price, wh, match_info, ok, score, suggs = self.match_row(b, p, s, c, weights)
 
             if ok and price != "매칭 실패":
                 results_n.append(wh)
@@ -203,7 +215,6 @@ class BrandMatchingSystem:
                 try: results_w.append(float(price) * int(qty))
                 except: results_w.append(0)
                 
-                # 🌟 매칭 성공 시 발주 데이터와 DB 데이터를 나란히 기록
                 success_products.append({
                     '[발주] 브랜드': b,
                     '[발주] 상품명': p,
