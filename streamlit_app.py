@@ -14,7 +14,14 @@ if 'match_state' not in st.session_state:
     }
 
 with st.sidebar:
-    st.title("⚙️ 2026 시스템 메뉴")
+    st.title("⚙️ 시스템 설정")
+    
+    st.markdown("### ⚖️ 매칭 가중치 조절")
+    p_w = st.slider("상품명 유사도 가중치", 0.1, 1.0, 0.5, 0.1, help="상품명이 비슷할 때 주는 기본 점수 비율")
+    o_w = st.slider("옵션 일치 보너스", 0, 100, 50, 5, help="색상/사이즈가 모두 일치하면 주는 가산점")
+    b_w = st.slider("브랜드 일치 보너스", 0, 50, 20, 5, help="브랜드가 정확히 일치할 때 주는 가산점")
+    weights = {'p_w': p_w, 'o_w': o_w, 'b_w': b_w}
+    
     st.markdown("---")
     menu = st.radio("작업 메뉴를 선택하세요", ["✅ 발주서 자동 매칭", "📚 동의어/키워드 관리", "📊 DB 연동 상태"])
     st.markdown("---")
@@ -59,7 +66,8 @@ if menu == "✅ 발주서 자동 매칭":
                     status_text.markdown(f"**진행률:** {int((current/total)*100)}% ({current}건 / {total}건 처리 중)")
                 
                 with st.spinner(f"🤖 매칭 엔진 가동 중..."):
-                    final_df, failed_products = engine.process_matching(combined_sheet2_df, progress_callback=update_progress)
+                    # 🌟 가중치 파라미터 전달하여 매칭 실행
+                    final_df, failed_products = engine.process_matching(combined_sheet2_df, weights, progress_callback=update_progress)
                 
                 st.session_state.match_state.update({
                     'final_df': final_df,
@@ -92,7 +100,7 @@ if menu == "✅ 발주서 자동 매칭":
         st.download_button("📥 통합 결과 다운로드", data=output.getvalue(), file_name="매칭완료.xlsx", use_container_width=True)
 
 # ==========================================
-# 📚 서브 화면 2: 동의어/키워드 관리
+# 📚 서브 화면 2: 동의어/키워드 관리 (🌟 증발했던 전체 코드 복구 완료)
 # ==========================================
 elif menu == "📚 동의어/키워드 관리":
     st.title("📚 스마트 동의어 및 제외 키워드 관리")
@@ -220,7 +228,7 @@ elif menu == "📚 동의어/키워드 관리":
         db.close()
 
 # ==========================================
-# 📊 서브 화면 3: DB 상태
+# 📊 서브 화면 3: DB 상태 (🌟 증발했던 전체 코드 복구 완료)
 # ==========================================
 elif menu == "📊 DB 연동 상태":
     st.title("📊 마스터 DB 연동 및 검색 관리")
@@ -246,19 +254,16 @@ elif menu == "📊 DB 연동 상태":
                 for _, r in new_db.iterrows():
                     b_val = str(r.get('브랜드','')).strip()
                     if b_val and b_val != 'nan':
-                        # 🌟 핵심 해결: 콤마 등 불순물 제거 후 완벽한 숫자로 변환
                         raw_price = str(r.get('공급가', '0')).replace(',', '').strip()
-                        try:
-                            p_val = float(raw_price)
-                        except ValueError:
-                            p_val = 0.0
+                        try: p_val = float(raw_price)
+                        except ValueError: p_val = 0.0
                             
                         db.add(MasterProduct(
                             brand=b_val, 
                             product_name=str(r.get('상품명','')).strip(), 
                             options=str(r.get('옵션입력','')).strip(), 
                             wholesale_name=str(r.get('중도매','')).strip(), 
-                            supply_price=p_val # 문자가 아닌 숫자로 안전하게 밀어넣음
+                            supply_price=p_val
                         ))
                         count += 1
                 db.commit()
