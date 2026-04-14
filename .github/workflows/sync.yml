@@ -15,4 +15,4 @@ jobs:
       - name: Push to Hub
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: git push -f https://유저이름:$HF_TOKEN@huggingface.co/spaces/유저이름/스페이스이름 main
+        run: git push -f https://jihun2da2:$HF_TOKEN@huggingface.co/spaces/jihun2da2/스페이스이름 main
